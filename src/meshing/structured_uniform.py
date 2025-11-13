@@ -30,6 +30,10 @@ def generate(
 
     lc = L / max(nx, ny)
 
+    # Initialize Gmsh if not already initialized
+    if not gmsh.isInitialized():
+        gmsh.initialize()
+
     gmsh.clear()
     gmsh.model.add(model_name)
 

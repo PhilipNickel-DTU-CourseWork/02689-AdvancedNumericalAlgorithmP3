@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit
-from naviflow_collocated.assembly.rhie_chow import compute_velocity_gradient_least_squares
+from fv.assembly.rhie_chow import compute_velocity_gradient_least_squares
 
 BC_WALL = 0
 BC_DIRICHLET = 1

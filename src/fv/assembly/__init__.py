@@ -1,4 +1,4 @@
-# Makes naviflow_collocated.assembly a package
+# Makes fv.assembly a package
 # Can be used to expose key assembly functions/classes if desired
 
 # from .momentum_solvers import PowerLawMomentumUSolver, PowerLawMomentumVSolver

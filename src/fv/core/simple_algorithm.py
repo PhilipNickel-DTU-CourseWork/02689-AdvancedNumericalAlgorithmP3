@@ -2,16 +2,16 @@ import os
 import numpy as np
 import numpy.linalg as la
 from scipy.sparse import coo_matrix
-from naviflow_collocated.assembly.convection_diffusion_matrix import assemble_diffusion_convection_matrix
-from naviflow_collocated.discretization.gradient.leastSquares import compute_cell_gradients
-#from naviflow_collocated.discretization.gradient.gauss import compute_cell_gradients
-from naviflow_collocated.linear_solvers.petsc_solver import petsc_solver
-from naviflow_collocated.assembly.rhie_chow import mdot_calculation, rhie_chow_velocity
-from naviflow_collocated.assembly.pressure_correction_eq_assembly import assemble_pressure_correction_matrix, pressure_correction_loop_term
-from naviflow_collocated.assembly.divergence import compute_divergence_from_face_fluxes
-from naviflow_collocated.core.corrections import velocity_correction
+from fv.assembly.convection_diffusion_matrix import assemble_diffusion_convection_matrix
+from fv.discretization.gradient.leastSquares import compute_cell_gradients
+#from fv.discretization.gradient.gauss import compute_cell_gradients
+from fv.linear_solvers.scipy_solver import scipy_solver
+from fv.assembly.rhie_chow import mdot_calculation, rhie_chow_velocity
+from fv.assembly.pressure_correction_eq_assembly import assemble_pressure_correction_matrix, pressure_correction_loop_term
+from fv.assembly.divergence import compute_divergence_from_face_fluxes
+from fv.core.corrections import velocity_correction
 import matplotlib.pyplot as plt
-from naviflow_collocated.core.helpers import bold_Dv_calculation, interpolate_to_face, compute_residual, relax_momentum_equation, apply_mean_zero_constraint, set_pressure_boundaries, compute_l2_norm, get_unique_cells_from_faces
+from fv.core.helpers import bold_Dv_calculation, interpolate_to_face, compute_residual, relax_momentum_equation, apply_mean_zero_constraint, set_pressure_boundaries, compute_l2_norm, get_unique_cells_from_faces
 import time
 from numba import njit
 
@@ -19,87 +19,6 @@ from numba import njit
 os.environ['NUMBA_CACHE_DIR'] = os.path.expanduser('~/.numba_cache')
 os.makedirs(os.environ['NUMBA_CACHE_DIR'], exist_ok=True)
 
-def piso_corrector_loop(mesh, A_p, ksp, mdot_start, rho, bold_D, U_star_rc, U_star, p, alpha_p, num_corrections=1):
-    """
-    Perform PISO pressure–velocity correction loops.
-
-    Parameters
-    ----------
-    mesh : Mesh object
-    A_p : sparse matrix
-        Pressure correction matrix (typically constant).
-    ksp : PETSc.KSP
-        Reusable KSP object for solving pressure corrections.
-    mdot_start : ndarray
-        Initial mass flux from Rhie–Chow velocities (before correction).
-    rho : float
-        Fluid density.
-    bold_D : ndarray
-        Diagonal momentum inverse matrix, shape (n_cells, 2).
-    U_star_rc : ndarray
-        Face velocity from Rhie–Chow interpolation.
-    U_star : ndarray
-        Momentum velocity solution at cell centers.
-    p : ndarray
-        Current pressure field (updated in-place).
-    alpha_p : float
-        Pressure under-relaxation factor.
-    num_corrections : int
-        Number of PISO pressure–velocity correction loops.
-
-    Returns
-    -------
-    U_new : ndarray
-        Updated velocity field (after all corrections).
-    p_new : ndarray
-        Updated pressure field.
-    mdot_new : ndarray
-        Updated mass flux field at faces.
-    U_faces_new : ndarray
-        Updated face velocities with Rhie-Chow correction.
-    """
-    n_cells = mesh.cell_volumes.shape[0]
-    U = U_star.copy()
-    U_faces = U_star_rc.copy()
-    mdot = mdot_start.copy()
-    p_prime_total = np.zeros(n_cells)
-
-    for correction_iter in range(num_corrections):
-        # Step 1: recompute RHS from current flux imbalance
-        rhs_p = compute_divergence_from_face_fluxes(mesh, mdot)
-
-        # Step 2: pressure correction solve
-        p_prime, _, _ = petsc_solver(A_p, -rhs_p, ksp=ksp, remove_nullspace=True)
-
-        # Step 3: velocity correction at cell centers
-        grad_p_prime = compute_cell_gradients(mesh, p_prime, weighted=True, weight_exponent=0.5, use_limiter=False)
-        U_prime = velocity_correction(mesh, grad_p_prime, bold_D)
-        U += U_prime
-
-        # Step 4: face velocity correction (maintaining Rhie-Chow)
-        # Interpolate pressure correction gradient to faces
-        grad_p_prime_face = interpolate_to_face(mesh, grad_p_prime)
-        
-        # Face velocity correction using the same bold_D interpolated to faces
-        bold_D_face = interpolate_to_face(mesh, bold_D)
-        U_prime_face = np.zeros_like(U_faces)
-        U_prime_face[:, 0] = -bold_D_face[:, 0] * grad_p_prime_face[:, 0]
-        U_prime_face[:, 1] = -bold_D_face[:, 1] * grad_p_prime_face[:, 1]
-        
-        # Update face velocities
-        U_faces += U_prime_face
-        
-        # Step 5: correct mass flux directly
-        mdot_prime = mdot_calculation(mesh, rho, U_prime_face, correction=True)
-        mdot += mdot_prime
-
-        # accumulate pressure correction
-        p_prime_total += p_prime
-
-    # Final pressure update (apply under-relaxation)
-    p += alpha_p * p_prime_total
-
-    return U, p, mdot, U_faces
 
 
 
@@ -130,7 +49,7 @@ def is_diagonally_dominant(A):
     dominance = np.all(diagonal >= off_diagonal_sum)
     return dominance
 
-def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection_scheme="TVD", limiter="MUSCL", PISO=False, PISO_corrections=1, progress_callback=None, interruption_flag=lambda: False, linear_solver_settings=None, n_nonortho_corrections=2, transient=False, dt=0.0, end_time=0.0, time_scheme="Euler", results_dir=None, save_interval=0):
+def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection_scheme="TVD", limiter="MUSCL", progress_callback=None, interruption_flag=lambda: False, linear_solver_settings=None, transient=False, dt=0.0, end_time=0.0, time_scheme="Euler", results_dir=None, save_interval=0):
     # Convert tolerance from string to float if needed
     tol = float(tol)
 
@@ -262,7 +181,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             A_u.setdiag(relaxed_A_u_diag)
 
             # solve
-            U_star[:,0], _, _= petsc_solver(A_u, rhs_u, **linear_solver_settings['momentum'])
+            U_star[:,0], _, _= scipy_solver(A_u, rhs_u, **linear_solver_settings['momentum'])
             A_u.setdiag(A_u_diag) # Restore original diagonal
 
             # Store residual field for u-momentum
@@ -292,7 +211,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             A_v.setdiag(relaxed_A_v_diag)
 
             # solve
-            U_star[:,1], _, _= petsc_solver(A_v, rhs_v, **linear_solver_settings['momentum'])
+            U_star[:,1], _, _= scipy_solver(A_v, rhs_v, **linear_solver_settings['momentum'])
             A_v.setdiag(A_v_diag) # Restore original diagonal
 
             # Store residual field for v-momentum
@@ -320,27 +239,22 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
 
             continuity_l2norm[i], max_mass_imbalance = compute_residual(A_p.data, A_p.indices, A_p.indptr, np.zeros_like(p), rhs_p, max_mass_imbalance, internal_cells)
 
-            p_prime, _, ksp_1 = petsc_solver(A_p, rhs_p, remove_nullspace=True, **linear_solver_settings['pressure'])
+            p_prime, _, ksp_1 = scipy_solver(A_p, rhs_p, remove_nullspace=True, **linear_solver_settings['pressure'])
 
             #=============================================================================
-            # CORRECTIONS
+            # CORRECTIONS (SIMPLE)
             #=============================================================================
-            if PISO:
-                U_corrected, p_corrected, mdot_corrected, U_faces_corrected = piso_corrector_loop(
-                    mesh, A_p, ksp_1, mdot_star, rho, bold_D, U_star_rc, U_star, p, alpha_p, num_corrections=PISO_corrections
-                )
-            else: # SIMPLE
-                grad_p_prime = compute_cell_gradients(mesh, p_prime, weighted=True, weight_exponent=0.5, use_limiter=False)
-                U_prime = velocity_correction(mesh, grad_p_prime, bold_D)
-                U_corrected = U_star + U_prime
-                
-                U_prime_face = interpolate_to_face(mesh, U_prime)
-                U_faces_corrected = U_star_rc + U_prime_face
-                
-                mdot_prime = mdot_calculation(mesh, rho, U_prime_face, correction=True)
-                mdot_corrected = mdot_star + mdot_prime
-                
-                p_corrected = p + alpha_p * p_prime
+            grad_p_prime = compute_cell_gradients(mesh, p_prime, weighted=True, weight_exponent=0.5, use_limiter=False)
+            U_prime = velocity_correction(mesh, grad_p_prime, bold_D)
+            U_corrected = U_star + U_prime
+
+            U_prime_face = interpolate_to_face(mesh, U_prime)
+            U_faces_corrected = U_star_rc + U_prime_face
+
+            mdot_prime = mdot_calculation(mesh, rho, U_prime_face, correction=True)
+            mdot_corrected = mdot_star + mdot_prime
+
+            p_corrected = p + alpha_p * p_prime
 
             # Update fields for next iteration
             p = p_corrected

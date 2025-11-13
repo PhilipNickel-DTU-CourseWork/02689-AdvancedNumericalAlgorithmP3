@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit, prange
-from naviflow_collocated.core.helpers import BC_NEUMANN
+from fv.core.helpers import BC_NEUMANN
 
 EPS = 1e-20
 

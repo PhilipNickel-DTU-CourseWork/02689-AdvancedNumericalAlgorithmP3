@@ -1,12 +1,12 @@
 import numpy as np
 from numba import njit
 
-from naviflow_collocated.discretization.diffusion.central_diff import (
+from fv.discretization.diffusion.central_diff import (
     compute_diffusive_flux_matrix_entry,
     compute_diffusive_correction,
     compute_boundary_diffusive_correction,
 )
-from naviflow_collocated.discretization.convection.upwind import (
+from fv.discretization.convection.upwind import (
     compute_convective_stencil,
     compute_boundary_convective_flux,
 )

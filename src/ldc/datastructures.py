@@ -1,54 +1,131 @@
 """Data structures for solver configuration and results.
+
+This module defines the configuration and result data structures
+for lid-driven cavity solvers (both FV and spectral).
 """
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 import numpy as np
 
+
 @dataclass
-class SolverConfig: 
-    # Problem setup
-    
-    Re: Optional[int] = 100
-    lid_velocity: Optional[float] = 1
+class SolverConfig:
+    """Physical problem configuration for lid-driven cavity.
+
+    Parameters
+    ----------
+    Re : float
+        Reynolds number (Re = U*L/nu).
+    lid_velocity : float
+        Velocity of the moving lid (typically 1.0).
+    Lx : float
+        Domain width (x-direction).
+    Ly : float
+        Domain height (y-direction).
+    """
+
+    Re: float = 100.0
+    lid_velocity: float = 1.0
     Lx: float = 1.0
     Ly: float = 1.0
 
-    # Solver configuration
-    discretization_method: Optional[str] = None
- 
 
 @dataclass
 class RuntimeConfig:
-    
-    tolerance: Optional[float] = None
+    """Runtime configuration for iterative solvers.
 
-    # Pseudo-timestepping options
-    max_iter: Optional[int] = None
+    Parameters
+    ----------
+    tolerance : float
+        Convergence tolerance for residual norm.
+    max_iter : int
+        Maximum number of iterations/pseudo-timesteps.
+    N : Optional[int]
+        Grid resolution parameter. For FV: cells per direction.
+        For spectral: polynomial order or number of modes.
+    """
 
-    # Spectral solver configuration
-    N: Optional[int] = None
+    tolerance: float = 1e-6
+    max_iter: int = 1000
+    N: Optional[int] = None  # Solver-specific grid/order parameter
+
+
+@dataclass
+class FVConfig:
+    """Finite volume solver-specific configuration.
+
+    Parameters
+    ----------
+    mesh_path : str
+        Path to mesh file (.msh format).
+    convection_scheme : str
+        Convection discretization ('upwind', 'TVD', 'central').
+    limiter : str
+        Limiter for TVD schemes ('MUSCL', 'vanLeer', 'minmod').
+    alpha_uv : float
+        Under-relaxation factor for momentum equations.
+    alpha_p : float
+        Under-relaxation factor for pressure correction.
+    """
+
+    mesh_path: str = "data/meshes/structured/fine.msh"
+    convection_scheme: str = "TVD"
+    limiter: str = "MUSCL"
+    alpha_uv: float = 0.7
+    alpha_p: float = 0.3
+
+
+@dataclass
+class SpectralConfig:
+    """Pseudo-spectral solver-specific configuration.
+
+    Parameters
+    ----------
+    N : int
+        Number of spectral modes or polynomial order.
+    basis : str
+        Spectral basis ('fourier', 'chebyshev').
+    dealiasing : bool
+        Use 3/2 rule for dealiasing.
+    """
+
+    N: int = 64
+    basis: str = "fourier"
+    dealiasing: bool = True
 
 
 @dataclass
 class Results:
+    """Container for solver results.
 
-    # Solution 
+    Parameters
+    ----------
+    u : np.ndarray
+        x-component of velocity field.
+    v : np.ndarray
+        y-component of velocity field.
+    p : np.ndarray
+        Pressure field.
+    res_his : List[float]
+        Residual history over iterations.
+    iterations : int
+        Total number of iterations performed.
+    converged : bool
+        Whether the solver converged within tolerance.
+    final_alg_residual : float
+        Final residual value.
+    wall_time : float
+        Total wall-clock time in seconds.
+    """
+
     u: Optional[np.ndarray] = None
     v: Optional[np.ndarray] = None
     p: Optional[np.ndarray] = None
-
-    # Residual history 
-    res_his: list = None 
-
-    
-   
-    # Runtime results
-    iterations: Optional[int] = None
-    converged: Optional[bool] = None
-    final_alg_residual: Optional[float] = None
-
-    # performance metrics
-    wall_time: Optional[float] = None
+    res_his: List[float] = field(default_factory=list)
+    iterations: int = 0
+    converged: bool = False
+    final_alg_residual: float = float('inf')
+    wall_time: float = 0.0
 
 

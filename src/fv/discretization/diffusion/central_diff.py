@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit
-from naviflow_collocated.discretization.convection.upwind import compute_velocity_gradient_least_squares
+from fv.discretization.convection.upwind import compute_velocity_gradient_least_squares
 
 EPS = 1.0e-14
 
