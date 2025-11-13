@@ -3,6 +3,7 @@
 
 # %% Imports
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import pyvista as pv
 from pathlib import Path
@@ -13,15 +14,20 @@ data_dir = Path(__file__).parent.parent.parent / "data" / "FV-Solver"
 fig_dir = Path(__file__).parent.parent.parent / "figures" / "FV-Solver"
 fig_dir.mkdir(parents=True, exist_ok=True)
 
-# %% Load results
-mesh = pv.read(data_dir / "LDC_Re100_solution.vtp")
+# %% Load data
+# Load spatial fields from VTK
+mesh = pv.read(data_dir / "LDC_Re100_fields.vtp")
 points = mesh.points
 x, y = points[:, 0], points[:, 1]
 u = mesh['u']
 v = mesh['v']
 p = mesh['p']
 vel_mag = mesh['velocity_magnitude']
-Re = float(mesh.field_data['Re'][0])
+
+# Load metadata from Parquet
+data = pd.read_parquet(data_dir / "LDC_Re100_data.parquet")
+Re = data.loc['config', 'Re'].iloc[0]
+residuals = data.loc['residuals', 'residual'].values
 
 # %% Plot velocity field
 fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -60,5 +66,16 @@ plt.colorbar(cf, ax=ax, label='Pressure')
 plt.tight_layout()
 plt.savefig(fig_dir / "LDC_Re100_pressure.pdf", bbox_inches='tight', dpi=300)
 print(f"Pressure plot saved to: {fig_dir / 'LDC_Re100_pressure.pdf'}")
+
+# %% Plot residual history
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.semilogy(residuals, linewidth=2)
+ax.set_xlabel('Iteration')
+ax.set_ylabel('Residual (L2 norm)')
+ax.set_title(f'Convergence History (Re = {Re:.0f})')
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig(fig_dir / "LDC_Re100_residuals.pdf", bbox_inches='tight', dpi=300)
+print(f"Residual plot saved to: {fig_dir / 'LDC_Re100_residuals.pdf'}")
 
 plt.close('all')

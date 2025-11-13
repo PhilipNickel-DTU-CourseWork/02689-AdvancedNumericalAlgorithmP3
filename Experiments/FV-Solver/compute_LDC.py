@@ -3,6 +3,7 @@
 
 # %% Imports
 import numpy as np
+import pandas as pd
 import pyvista as pv
 from pathlib import Path
 from ldc import FVSolver
@@ -19,27 +20,61 @@ print(f"Converged: {results.converged}")
 print(f"Iterations: {results.iterations}")
 print(f"Final residual: {results.final_alg_residual:.6e}")
 
-# %% Save results as VTK
+# %% Save spatial fields as VTK
 cell_centers = solver.get_cell_centers()
 
-# Create PyVista point cloud from cell centers
 points = np.column_stack([cell_centers[:, 0], cell_centers[:, 1], np.zeros(len(cell_centers))])
 cloud = pv.PolyData(points)
 
-# Add solution fields as point data
 cloud['u'] = results.u
 cloud['v'] = results.v
 cloud['p'] = results.p
 cloud['velocity_magnitude'] = np.sqrt(results.u**2 + results.v**2)
 
-# Add metadata
-cloud.field_data['Re'] = np.array([solver.solver_config.Re])
-cloud.field_data['converged'] = np.array([results.converged])
-cloud.field_data['iterations'] = np.array([results.iterations])
-cloud.field_data['final_residual'] = np.array([results.final_alg_residual])
+fields_file = data_dir / "LDC_Re100_fields.vtp"
+cloud.save(fields_file)
+print(f"\nFields saved to: {fields_file}")
 
-# Save as VTK file
-output_file = data_dir / "LDC_Re100_solution.vtp"
-cloud.save(output_file)
+# %% Save metadata and time-series as Parquet
+# Create MultiIndex DataFrame with config, results, and residuals
+data_frames = []
 
-print(f"\nSolution saved to: {output_file}")
+# Config
+config_df = pd.DataFrame({
+    'Re': [solver.solver_config.Re],
+    'lid_velocity': [solver.solver_config.lid_velocity],
+    'Lx': [solver.solver_config.Lx],
+    'Ly': [solver.solver_config.Ly],
+    'convection_scheme': [solver.fv_config.convection_scheme],
+    'limiter': [solver.fv_config.limiter],
+    'alpha_uv': [solver.fv_config.alpha_uv],
+    'alpha_p': [solver.fv_config.alpha_p],
+})
+config_df['data_type'] = 'config'
+config_df['index'] = 0
+
+# Results
+results_df = pd.DataFrame({
+    'converged': [results.converged],
+    'iterations': [results.iterations],
+    'final_residual': [results.final_alg_residual],
+    'wall_time': [results.wall_time],
+})
+results_df['data_type'] = 'results'
+results_df['index'] = 0
+
+# Residuals (time-series)
+residuals_df = pd.DataFrame({
+    'iteration': range(len(results.res_his)),
+    'residual': results.res_his,
+})
+residuals_df['data_type'] = 'residuals'
+residuals_df = residuals_df.rename(columns={'iteration': 'index'})
+
+# Combine and set MultiIndex
+all_data = pd.concat([config_df, results_df, residuals_df], ignore_index=True)
+all_data = all_data.set_index(['data_type', 'index'])
+
+data_file = data_dir / "LDC_Re100_data.parquet"
+all_data.to_parquet(data_file)
+print(f"Data saved to: {data_file}")
