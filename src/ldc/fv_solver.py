@@ -1,7 +1,7 @@
 """Finite volume solver for lid-driven cavity.
 
 This module implements a collocated finite volume solver using
-SIMPLE/PISO algorithms for pressure-velocity coupling.
+SIMPLE algorithm for pressure-velocity coupling.
 """
 
 import sys
@@ -10,72 +10,66 @@ from pathlib import Path
 from typing import Tuple
 
 from .base_solver import LidDrivenCavitySolver
-from .datastructures import SolverConfig, FVConfig, Results, SolutionFields, ConvergenceResults
+from .datastructures import FVConfig, Results
 
 
 class FVSolver(LidDrivenCavitySolver):
     """Finite volume solver for lid-driven cavity problem.
 
     This solver uses a collocated grid arrangement with Rhie-Chow interpolation
-    for pressure-velocity coupling. Supports both SIMPLE and PISO algorithms.
+    for pressure-velocity coupling using the SIMPLE algorithm.
 
     Parameters
     ----------
-    solver_config : SolverConfig
-        Physical problem configuration (Re, lid velocity, domain size).
-    runtime_config : RuntimeConfig
-        Runtime configuration (tolerance, max iterations).
-    fv_config : FVConfig
-        Finite volume specific configuration (mesh resolution, schemes, etc.).
+    config : FVConfig
+        Configuration with physics (Re, lid velocity, domain size) and
+        FV-specific parameters (nx, ny, convection scheme, etc.).
     """
 
-    def __init__(
-        self,
-        Re: float,
-        mesh_path: str = "data/meshes/structured/fine.msh",
-        solver_config: SolverConfig = None,
-        fv_config: FVConfig = None,
-    ):
+    def __init__(self, config: FVConfig):
         """Initialize FV solver.
 
         Parameters
         ----------
-        Re : float
-            Reynolds number.
-        mesh_path : str, optional
-            Path to mesh file. Default: fine mesh.
-        solver_config : SolverConfig, optional
-            Advanced solver configuration. If None, uses defaults with specified Re.
-        fv_config : FVConfig, optional
-            Advanced FV configuration. If None, uses defaults with specified mesh_path.
+        config : FVConfig
+            Finite volume configuration with physics and numerics.
         """
-        # Create configs if not provided
-        if solver_config is None:
-            solver_config = SolverConfig(Re=Re)
-        if fv_config is None:
-            fv_config = FVConfig(mesh_path=mesh_path)
+        # Initialize base solver (will call _setup_solver_specifics)
+        super().__init__(config)
 
-        super().__init__(solver_config)
-        self.fv_config = fv_config
+    def _get_grid_size(self) -> Tuple[int, int]:
+        """Return grid dimensions from FV config.
+
+        Returns
+        -------
+        nx, ny : int
+            Number of grid cells in x and y directions.
+        """
+        return self.config.nx, self.config.ny
+
+    def _setup_solver_specifics(self):
+        """Create FV mesh structure from base class grid.
+
+        This method is called by base class after grid creation.
+        Creates MeshData2D directly in memory (no files).
+        """
+        from meshing.structured_inmemory import create_structured_mesh_2d
+
+        # Create MeshData2D object (numba jitclass)
+        self.mesh = create_structured_mesh_2d(
+            nx=self.nx,
+            ny=self.ny,
+            Lx=self.config.Lx,
+            Ly=self.config.Ly,
+            lid_velocity=self.config.lid_velocity
+        )
 
         # Initialize solution fields
-        self.U = None  # Velocity field (n_cells x 2)
-        self.p = None  # Pressure field (n_cells)
-        self.mdot = None  # Mass flux at faces
-
-        # Set up mesh using base class method
-        self._setup_mesh(mesh_path=fv_config.mesh_path)
-
-    def step(self) -> float:
-        """Single iteration step.
-
-        Note: The underlying simple_algorithm runs its own iteration loop,
-        so this method is not used directly. Instead, solve() is overridden.
-        """
-        raise NotImplementedError(
-            "FVSolver uses simple_algorithm which manages its own iteration loop. "
-            "Call solve() instead of step()."
-        )
+        n_cells = self.nx * self.ny
+        n_faces = self.mesh.face_areas.shape[0]
+        self.U = np.zeros((n_cells, 2))
+        self.p = np.zeros(n_cells)
+        self.mdot = np.zeros(n_faces)
 
     def solve(self, tolerance: float = 1e-6, max_iter: int = 1000) -> Results:
         """Run the SIMPLE algorithm until convergence.
@@ -92,65 +86,52 @@ class FVSolver(LidDrivenCavitySolver):
         Results
             Solution data including velocity, pressure, and convergence info.
         """
-        import sys
-        from pathlib import Path
-
-        # Ensure fv module is importable
-        src_dir = Path(__file__).parent.parent
-        if str(src_dir) not in sys.path:
-            sys.path.insert(0, str(src_dir))
-
         from fv.core.simple_algorithm import simple_algorithm
 
         n_cells = self.mesh.cell_volumes.shape[0]
-        print(f"Starting FV solver with SIMPLE algorithm (Re={self.solver_config.Re}, "
+        print(f"Starting FV solver with SIMPLE algorithm (Re={self.config.Re}, "
               f"n_cells={n_cells})")
 
-        # Run SIMPLE algorithm
-        p, U, mdot, residuals, iterations, converged, u_res, v_res, cont_res = (
-            simple_algorithm(
-                mesh=self.mesh,
-                alpha_uv=self.fv_config.alpha_uv,
-                alpha_p=self.fv_config.alpha_p,
-                rho=self.rho,
-                mu=self.mu,
-                max_iter=max_iter,
-                tol=tolerance,
-                convection_scheme=self.fv_config.convection_scheme,
-                limiter=self.fv_config.limiter,
-            )
+        # Run SIMPLE algorithm (returns dictionary)
+        result = simple_algorithm(
+            mesh=self.mesh,
+            alpha_uv=self.config.alpha_uv,
+            alpha_p=self.config.alpha_p,
+            rho=self.rho,
+            mu=self.mu,
+            max_iter=max_iter,
+            tol=tolerance,
+            convection_scheme=self.config.convection_scheme,
+            limiter=self.config.limiter,
         )
+
+        # Extract data from result dictionary
+        fields = result['fields']
+        time_series = result['time_series']
+        metadata = result['metadata']
 
         # Store solution
-        self.U = U
-        self.p = p
-        self.mdot = mdot
-        self.converged = converged
-        self.iteration_count = iterations
+        self.p = fields['p']
+        self.U = np.column_stack([fields['u'], fields['v']])
+        self.mdot = result['mdot']
+        self.converged = metadata['converged']
+        self.iterations = metadata['iterations']
+        self.residual_history = time_series['residual']
 
-        # Extract residual history (u, v, continuity)
-        u_l2norm, v_l2norm, continuity_l2norm = residuals
-        # Combine residuals (use max of u, v, continuity as overall residual)
-        combined_residuals = np.maximum(
-            np.maximum(u_l2norm, v_l2norm), continuity_l2norm
-        )
-        self.residual_history = combined_residuals.tolist()
+        # Add coordinates to fields
+        fields['x'] = self.mesh.cell_centers[:, 0]
+        fields['y'] = self.mesh.cell_centers[:, 1]
+        fields['grid_points'] = self.mesh.cell_centers
 
-        # Package results
-        fields = SolutionFields(u=U[:, 0], v=U[:, 1], p=p)
-        convergence = ConvergenceResults(
-            iterations=iterations,
-            converged=converged,
-            final_alg_residual=combined_residuals[-1] if len(combined_residuals) > 0 else float('inf'),
-            wall_time=0.0,  # simple_algorithm doesn't return wall time directly
-        )
-        results = Results(
-            convergence=convergence,
-            fields=fields,
-            res_his=self.residual_history,
-        )
+        # Add solver-specific metadata
+        metadata.update({
+            'convection_scheme': self.config.convection_scheme,
+            'limiter': self.config.limiter,
+            'alpha_uv': self.config.alpha_uv,
+            'alpha_p': self.config.alpha_p
+        })
 
-        return results
+        return self._build_results(fields, time_series, metadata)
 
     def get_velocity_field(self) -> Tuple[np.ndarray, np.ndarray]:
         """Return velocity field components.
@@ -187,8 +168,3 @@ class FVSolver(LidDrivenCavitySolver):
             Cell center coordinates (shape: n_cells x 2).
         """
         return self.mesh.cell_centers
-
-    def get_solver_specific_config(self):
-        """Return FV-specific configuration."""
-        from dataclasses import asdict
-        return asdict(self.fv_config)

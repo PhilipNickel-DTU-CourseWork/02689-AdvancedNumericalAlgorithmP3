@@ -41,43 +41,39 @@ class SpectralSolver(LidDrivenCavitySolver):
         config : SpectralConfig
             Spectral solver configuration (physics + numerics).
         """
-        # Grid parameters (set before super().__init__ since _setup_grid needs them)
-        self.Nx = config.Nx
-        self.Ny = config.Ny
+        # Store spectral-specific parameters
         self.dt = config.dt
 
+        # Initialize base solver (creates grid using _get_grid_size)
         super().__init__(config)
+
+        # Store grid dimensions from base class for convenience
+        self.Nx = self.nx
+        self.Ny = self.ny
 
         # Initialize 2D working arrays for spectral computations
         self.u_2d = np.zeros((self.Ny, self.Nx))
         self.v_2d = np.zeros((self.Ny, self.Nx))
         self.p_2d = np.zeros((self.Ny, self.Nx))
 
-        # Setup differentiation operators (subclass implements)
-        self._setup_differentiation()
+    def _get_grid_size(self):
+        """Return grid dimensions from spectral config.
 
-    def _setup_grid(self):
-        """Create uniform spectral grid (implements base class abstract method).
-
-        Creates:
-        - self.x, self.y: 1D grid coordinates
-        - self.X, self.Y: 2D meshgrid arrays
-        - self.dx, self.dy: Grid spacing
-        - self.grid_points: Flattened (N, 2) array for base class compatibility
-
-        Note: Subclasses can override this for non-uniform grids (e.g., Chebyshev).
+        Returns
+        -------
+        nx, ny : int
+            Number of grid points in x and y directions.
         """
-        # Create uniform grid
-        self.x = np.linspace(0, self.config.Lx, self.Nx)
-        self.y = np.linspace(0, self.config.Ly, self.Ny)
-        self.X, self.Y = np.meshgrid(self.x, self.y)
+        return self.config.Nx, self.config.Ny
 
-        # Grid spacing
-        self.dx = self.x[1] - self.x[0] if self.Nx > 1 else self.config.Lx
-        self.dy = self.y[1] - self.y[0] if self.Ny > 1 else self.config.Ly
+    def _setup_solver_specifics(self):
+        """Setup spectral differentiation operators.
 
-        # Set standardized grid_points for base class compatibility
-        self.grid_points = np.column_stack([self.X.flatten(), self.Y.flatten()])
+        This method is called by base class after grid creation.
+        Override _setup_differentiation() in subclasses to create
+        FFT plans, differentiation matrices, wavenumber vectors, etc.
+        """
+        self._setup_differentiation()
 
     def _setup_differentiation(self):
         """Setup spatial differentiation operators.

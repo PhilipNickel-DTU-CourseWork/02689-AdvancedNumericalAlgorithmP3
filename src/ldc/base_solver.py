@@ -1,59 +1,112 @@
 """Abstract base solver for lid-driven cavity problem."""
 
 from abc import ABC, abstractmethod
-from typing import Tuple, Dict, Any
-import sys
-from pathlib import Path
-import yaml
+from typing import Tuple
 import numpy as np
-import pandas as pd
-import pyvista as pv
-from dataclasses import asdict
 
-from .datastructures import SolverConfig, Results
+from .datastructures import Config, Results
 
 
 class LidDrivenCavitySolver(ABC):
-    """Abstract base solver defining the lid-driven cavity problem.
+    """Abstract base solver for lid-driven cavity problem.
 
-    This class handles:
-    - Problem definition (Re, lid velocity, domain size)
-    - Fluid properties computation (ρ, μ)
-    - Mesh/grid generation and loading
-    - Boundary condition definition
+    This base class handles:
+    - Physics parameters (Re, viscosity, density)
+    - Uniform structured grid creation
+    - Common grid properties (dx, dy, X, Y, grid_points)
 
-    Subclasses implement solver-specific methods:
-    - How to solve (FV: SIMPLE, Spectral: time-stepping)
-    - How to apply BCs (FV: face values, Spectral: Fourier)
-    - How to extract results
+    Subclasses only need to:
+    - Specify grid size via _get_grid_size()
+    - Do solver-specific setup via _setup_solver_specifics()
+    - Implement solve() method
+
+    Parameters
+    ----------
+    config : Config (or subclass like FVConfig, SpectralConfig)
+        Configuration with physics (Re, Lx, Ly, lid_velocity) and numerics (nx, ny, etc).
     """
 
-    def __init__(self, solver_config: SolverConfig):
-        """Initialize base solver with problem configuration.
+    def __init__(self, config: Config):
+        """Initialize solver with configuration.
 
         Parameters
         ----------
-        solver_config : SolverConfig
-            Physical problem configuration (Re, lid velocity, domain).
+        config : Config
+            Configuration object (FVConfig, SpectralConfig, etc).
         """
-        self.solver_config = solver_config
+        self.config = config
 
         # Compute fluid properties from Reynolds number
-        # Re = ρ * U * L / μ  =>  μ = ρ * U * L / Re
-        self.rho = 1.0  # Density (normalized)
-        self.mu = (
-            self.rho * solver_config.lid_velocity * solver_config.Lx / solver_config.Re
-        )
+        self.rho = 1.0  # Normalized density
+        self.mu = self.rho * config.lid_velocity * config.Lx / config.Re
+
+        # Get grid size from subclass
+        nx, ny = self._get_grid_size()
+
+        # Create uniform structured grid (common for all solvers)
+        self._create_uniform_grid(nx, ny)
 
         # Solver state
         self.converged = False
         self.iterations = 0
         self.residual_history = []
 
-        # Mesh/grid (populated by subclass via _setup_mesh)
-        self.mesh = None
+        # Let subclass do solver-specific initialization
+        self._setup_solver_specifics()
 
-    # ---- Abstract methods: subclasses must implement ----
+    @abstractmethod
+    def _get_grid_size(self) -> Tuple[int, int]:
+        """Return grid dimensions (nx, ny) for this solver.
+
+        Returns
+        -------
+        nx, ny : int
+            Number of grid points/cells in x and y directions.
+        """
+        pass
+
+    def _create_uniform_grid(self, nx: int, ny: int):
+        """Create uniform structured grid (shared by all solvers).
+
+        Creates grid arrays that are accessible to subclasses:
+        - self.x, self.y : 1D coordinate arrays
+        - self.X, self.Y : 2D meshgrid arrays
+        - self.dx, self.dy : Grid spacing
+        - self.grid_points : Flattened (N, 2) array of coordinates
+        - self.nx, self.ny : Grid dimensions
+
+        Parameters
+        ----------
+        nx, ny : int
+            Number of grid points in x and y.
+        """
+        self.nx = nx
+        self.ny = ny
+
+        # Create 1D coordinates
+        self.x = np.linspace(0, self.config.Lx, nx)
+        self.y = np.linspace(0, self.config.Ly, ny)
+
+        # Create 2D meshgrid
+        self.X, self.Y = np.meshgrid(self.x, self.y)
+
+        # Grid spacing
+        self.dx = self.x[1] - self.x[0] if nx > 1 else self.config.Lx
+        self.dy = self.y[1] - self.y[0] if ny > 1 else self.config.Ly
+
+        # Flattened grid points for compatibility
+        self.grid_points = np.column_stack([self.X.flatten(), self.Y.flatten()])
+
+    @abstractmethod
+    def _setup_solver_specifics(self):
+        """Solver-specific initialization.
+
+        Called after grid creation. Use this to:
+        - Create solver-specific data structures (FV mesh, spectral operators, etc.)
+        - Initialize solution fields
+        - Setup any other solver-specific state
+        """
+        pass
 
     @abstractmethod
     def solve(self, tolerance: float = 1e-6, max_iter: int = 1000) -> Results:
@@ -62,191 +115,89 @@ class LidDrivenCavitySolver(ABC):
         Parameters
         ----------
         tolerance : float
-            Convergence tolerance for residual norm.
+            Convergence tolerance.
         max_iter : int
-            Maximum number of iterations.
+            Maximum iterations.
 
         Returns
         -------
         Results
-            Solution data including velocity, pressure, and convergence info.
+            Solution data with fields, time_series, and metadata.
         """
         pass
 
-    @abstractmethod
-    def get_velocity_field(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Return velocity field components.
+    def _build_results(self, fields: dict, time_series: dict, solver_metadata: dict) -> Results:
+        """Helper to build Results object with config metadata.
+
+        Parameters
+        ----------
+        fields : dict
+            Spatial fields (u, v, p, etc.) as arrays.
+        time_series : dict
+            Time series data (residuals, etc.) as lists.
+        solver_metadata : dict
+            Solver-specific metadata (iterations, converged, etc.).
 
         Returns
         -------
-        u, v : np.ndarray
-            x and y components of velocity.
+        Results
+            Complete results object.
         """
-        pass
-
-    @abstractmethod
-    def get_pressure_field(self) -> np.ndarray:
-        """Return pressure field.
-
-        Returns
-        -------
-        p : np.ndarray
-            Pressure field.
-        """
-        pass
-
-    @abstractmethod
-    def get_cell_centers(self) -> np.ndarray:
-        """Return spatial coordinates for solution fields.
-
-        Returns
-        -------
-        coordinates : np.ndarray
-            Spatial coordinates (shape: n_points x 2).
-        """
-        pass
-
-    # ---- Shared methods: mesh/grid and BC setup ----
-
-    def _create_lid_driven_cavity_bc_config(self) -> dict:
-        """Create boundary condition configuration for lid-driven cavity.
-
-        Returns
-        -------
-        dict
-            BC configuration with:
-            - Top wall: u = lid_velocity, v = 0 (moving lid)
-            - Other walls: u = 0, v = 0 (no-slip)
-            - All walls: zero gradient for pressure
-
-        Notes
-        -----
-        This defines the physical BCs. How they're applied is solver-specific.
-        """
-        return {
-            "boundaries": {
-                "top": {
-                    "velocity": {
-                        "bc": "dirichlet",
-                        "value": [float(self.solver_config.lid_velocity), 0.0],
-                    },
-                    "pressure": {"bc": "neumann", "value": 0.0},
-                },
-                "bottom": {
-                    "velocity": {"bc": "dirichlet", "value": [0.0, 0.0]},
-                    "pressure": {"bc": "neumann", "value": 0.0},
-                },
-                "left": {
-                    "velocity": {"bc": "dirichlet", "value": [0.0, 0.0]},
-                    "pressure": {"bc": "neumann", "value": 0.0},
-                },
-                "right": {
-                    "velocity": {"bc": "dirichlet", "value": [0.0, 0.0]},
-                    "pressure": {"bc": "neumann", "value": 0.0},
-                },
-            }
+        # Combine config and solver metadata
+        metadata = {
+            'Re': self.config.Re,
+            'Lx': self.config.Lx,
+            'Ly': self.config.Ly,
+            'lid_velocity': self.config.lid_velocity,
+            'nx': self.nx,
+            'ny': self.ny,
+            **solver_metadata
         }
 
-    def _setup_mesh(self, mesh_path: str):
-        """Load mesh file with boundary conditions.
-
-        Parameters
-        ----------
-        mesh_path : str
-            Path to the mesh file (.msh format).
-
-        Notes
-        -----
-        - FV solver uses full MeshData2D (faces, connectivity, volumes)
-        - Spectral solver uses just grid points (uniform spacing)
-        """
-        # Ensure meshing module is importable
-        src_dir = Path(__file__).parent.parent
-        if str(src_dir) not in sys.path:
-            sys.path.insert(0, str(src_dir))
-
-        from meshing import load_mesh
-
-        # Create BC config
-        bc_config = self._create_lid_driven_cavity_bc_config()
-        cache_dir = Path.home() / ".cache" / "ldc_solver"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        bc_config_file = cache_dir / "lid_driven_cavity_bc.yaml"
-        with open(bc_config_file, "w") as f:
-            yaml.dump(bc_config, f)
-
-        # Load mesh with BC config
-        self.mesh = load_mesh(mesh_path, bc_config_file=str(bc_config_file))
-
-    def get_solver_specific_config(self) -> Dict[str, Any]:
-        """Return solver-specific configuration.
-
-        Returns
-        -------
-        dict
-            Solver-specific configuration. Override in subclasses.
-        """
-        return {}
-
-    def save_fields(self, output_path: Path, results: Results):
-        """Save spatial solution fields to VTK file.
-
-        Parameters
-        ----------
-        output_path : Path
-            Output file path (should end in .vtp).
-        results : Results
-            Solution results containing fields.
-        """
-        # Get spatial coordinates
-        cell_centers = self.get_cell_centers()
-        points = np.column_stack([
-            cell_centers[:, 0],
-            cell_centers[:, 1],
-            np.zeros(len(cell_centers))
-        ])
-
-        # Create point cloud
-        cloud = pv.PolyData(points)
-        cloud['u'] = results.fields.u
-        cloud['v'] = results.fields.v
-        cloud['p'] = results.fields.p
-        cloud['velocity_magnitude'] = np.sqrt(
-            results.fields.u**2 + results.fields.v**2
+        return Results(
+            fields=fields,
+            time_series=time_series,
+            metadata=metadata
         )
 
-        # Save to VTK
-        cloud.save(output_path)
-
-    def save_data(self, output_path: Path, results: Results):
-        """Save metadata and time-series to Parquet file.
+    def save(self, filepath, results: Results):
+        """Save results to HDF5 file.
 
         Parameters
         ----------
-        output_path : Path
-            Output file path (should end in .parquet).
+        filepath : str or Path
+            Output file path.
         results : Results
-            Solution results containing convergence info and residuals.
+            Results object to save.
         """
-        # Config - combine solver and solver-specific config
-        config_df = pd.concat([
-            pd.DataFrame([asdict(self.solver_config)]),
-            pd.DataFrame([self.get_solver_specific_config()])
-        ], axis=1).assign(data_type='config', index=0)
+        import h5py
+        from pathlib import Path
 
-        # Results - convergence info
-        results_df = pd.DataFrame([asdict(results.convergence)]).assign(
-            data_type='results', index=0
-        )
+        filepath = Path(filepath)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        # Residuals - time-series
-        residuals_df = pd.DataFrame(
-            results.res_his, columns=['residual']
-        ).reset_index().assign(data_type='residuals')
+        with h5py.File(filepath, 'w') as f:
+            # Save metadata as root-level attributes
+            for key, val in results.metadata.items():
+                f.attrs[key] = val
 
-        # Combine and set MultiIndex
-        all_data = pd.concat([config_df, results_df, residuals_df], ignore_index=True)
-        all_data = all_data.set_index(['data_type', 'index'])
+            # Save fields in a fields group
+            fields_grp = f.create_group('fields')
+            for key, val in results.fields.items():
+                fields_grp.create_dataset(key, data=val)
 
-        # Save to Parquet
-        all_data.to_parquet(output_path)
+            # Add velocity magnitude if u and v are present
+            if 'u' in results.fields and 'v' in results.fields:
+                import numpy as np
+                vel_mag = np.sqrt(results.fields['u']**2 + results.fields['v']**2)
+                fields_grp.create_dataset('velocity_magnitude', data=vel_mag)
+
+            # Save grid_points at root level for compatibility
+            if 'grid_points' in results.fields:
+                f.create_dataset('grid_points', data=results.fields['grid_points'])
+
+            # Save time series in a group
+            if results.time_series:
+                ts_grp = f.create_group('time_series')
+                for key, val in results.time_series.items():
+                    ts_grp.create_dataset(key, data=val)
