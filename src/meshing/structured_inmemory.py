@@ -1,12 +1,14 @@
-"""Create structured mesh directly in memory as MeshData2D."""
+"""Create structured mesh using gmsh (in-memory) and convert to MeshData2D."""
 
 import numpy as np
+import gmsh
 from .mesh_data import MeshData2D
+from .mesh_loader import _build_meshdata2d
 
 
 def create_structured_mesh_2d(nx: int, ny: int, Lx: float = 1.0, Ly: float = 1.0,
                                 lid_velocity: float = 1.0) -> MeshData2D:
-    """Create a uniform structured quad mesh directly as MeshData2D.
+    """Create a uniform structured quad mesh using gmsh (no file I/O).
 
     Parameters
     ----------
@@ -22,247 +24,149 @@ def create_structured_mesh_2d(nx: int, ny: int, Lx: float = 1.0, Ly: float = 1.0
     MeshData2D
         Mesh object ready for FV solver.
     """
-    dx = Lx / nx
-    dy = Ly / ny
+    # Initialize gmsh
+    if not gmsh.isInitialized():
+        gmsh.initialize()
 
-    # --- Cells ---
-    n_cells = nx * ny
-    cell_volumes = np.full(n_cells, dx * dy, dtype=np.float64)
+    gmsh.clear()
+    gmsh.model.add("structured_cavity")
 
-    # Cell centers: row-major ordering (i + j*nx)
-    cell_centers = np.zeros((n_cells, 2), dtype=np.float64)
-    for j in range(ny):
-        for i in range(nx):
-            idx = i + j * nx
-            cell_centers[idx] = [(i + 0.5) * dx, (j + 0.5) * dy]
+    # 1. Create geometry
+    lc = Lx / max(nx, ny)
 
-    # --- Vertices ---
-    n_verts = (nx + 1) * (ny + 1)
-    vertices = np.zeros((n_verts, 2), dtype=np.float64)
-    for j in range(ny + 1):
-        for i in range(nx + 1):
-            idx = i + j * (nx + 1)
-            vertices[idx] = [i * dx, j * dy]
+    def add_point(x, y):
+        return gmsh.model.geo.addPoint(x, y, 0.0, lc)
 
-    # --- Faces ---
-    # Internal x-faces (vertical): (nx-1) * ny
-    # Internal y-faces (horizontal): nx * (ny-1)
-    # Boundary: bottom nx, top nx, left ny, right ny
-    n_internal_x = (nx - 1) * ny
-    n_internal_y = nx * (ny - 1)
-    n_internal = n_internal_x + n_internal_y
-    n_boundary = 2 * nx + 2 * ny
-    n_faces = n_internal + n_boundary
+    # Create corner points
+    p = [
+        add_point(0, 0),      # bottom-left
+        add_point(Lx, 0),     # bottom-right
+        add_point(Lx, Ly),    # top-right
+        add_point(0, Ly)      # top-left
+    ]
 
-    owner_cells = np.zeros(n_faces, dtype=np.int64)
-    neighbor_cells = np.full(n_faces, -1, dtype=np.int64)
-    face_centers = np.zeros((n_faces, 2), dtype=np.float64)
-    face_areas = np.zeros(n_faces, dtype=np.float64)
-    face_vertices = np.zeros((n_faces, 2), dtype=np.int64)
-    vector_S_f = np.zeros((n_faces, 2), dtype=np.float64)
-    vector_d_CE = np.zeros((n_faces, 2), dtype=np.float64)
+    # Create boundary lines
+    lines = [
+        gmsh.model.geo.addLine(p[i], p[(i + 1) % 4]) for i in range(4)
+    ]  # [bottom, right, top, left]
 
-    face_idx = 0
+    # Create surface
+    cloop = gmsh.model.geo.addCurveLoop(lines)
+    surface = gmsh.model.geo.addPlaneSurface([cloop])
 
-    # Internal vertical faces (x-direction)
-    for j in range(ny):
-        for i in range(nx - 1):
-            owner = i + j * nx
-            neighbor = (i + 1) + j * nx
-            owner_cells[face_idx] = owner
-            neighbor_cells[face_idx] = neighbor
-            face_centers[face_idx] = [(i + 1) * dx, (j + 0.5) * dy]
-            face_areas[face_idx] = dy
-            # Vertices: bottom and top of vertical edge
-            v1 = (i + 1) + j * (nx + 1)
-            v2 = (i + 1) + (j + 1) * (nx + 1)
-            face_vertices[face_idx] = [v1, v2]
-            # Surface vector points in +x direction
-            vector_S_f[face_idx] = [dy, 0.0]
-            # Distance vector from owner to neighbor
-            vector_d_CE[face_idx] = [dx, 0.0]
-            face_idx += 1
+    # 2. Set transfinite mesh (structured quad mesh)
+    gmsh.model.geo.mesh.setTransfiniteCurve(lines[0], nx + 1)  # bottom
+    gmsh.model.geo.mesh.setTransfiniteCurve(lines[2], nx + 1)  # top
+    gmsh.model.geo.mesh.setTransfiniteCurve(lines[1], ny + 1)  # right
+    gmsh.model.geo.mesh.setTransfiniteCurve(lines[3], ny + 1)  # left
+    gmsh.model.geo.mesh.setTransfiniteSurface(surface)
+    gmsh.model.geo.mesh.setRecombine(2, surface)
 
-    # Internal horizontal faces (y-direction)
-    for j in range(ny - 1):
-        for i in range(nx):
-            owner = i + j * nx
-            neighbor = i + (j + 1) * nx
-            owner_cells[face_idx] = owner
-            neighbor_cells[face_idx] = neighbor
-            face_centers[face_idx] = [(i + 0.5) * dx, (j + 1) * dy]
-            face_areas[face_idx] = dx
-            # Vertices: left and right of horizontal edge
-            v1 = i + (j + 1) * (nx + 1)
-            v2 = (i + 1) + (j + 1) * (nx + 1)
-            face_vertices[face_idx] = [v1, v2]
-            # Surface vector points in +y direction
-            vector_S_f[face_idx] = [0.0, dx]
-            # Distance vector from owner to neighbor
-            vector_d_CE[face_idx] = [0.0, dy]
-            face_idx += 1
+    gmsh.model.geo.synchronize()
 
-    internal_faces = np.arange(n_internal, dtype=np.int64)
-    boundary_start = face_idx
+    # 3. Physical tagging for boundaries
+    boundary_names = ["bottom", "right", "top", "left"]
+    for i, name in enumerate(boundary_names):
+        tag = gmsh.model.addPhysicalGroup(1, [lines[i]])
+        gmsh.model.setPhysicalName(1, tag, name)
 
-    # Boundary faces
-    boundary_patches = np.full(n_faces, -1, dtype=np.int64)
-    boundary_types = np.full((n_faces, 2), -1, dtype=np.int64)  # [vel_type, p_type]
-    boundary_values = np.zeros((n_faces, 3), dtype=np.float64)  # [u, v, p]
-    d_Cb = np.zeros(n_faces, dtype=np.float64)
+    # Fluid domain
+    fluid_tag = gmsh.model.addPhysicalGroup(2, [surface], 10)
+    gmsh.model.setPhysicalName(2, fluid_tag, "fluid_domain")
 
-    # Bottom boundary (y=0)
-    for i in range(nx):
-        owner = i
-        owner_cells[face_idx] = owner
-        face_centers[face_idx] = [(i + 0.5) * dx, 0.0]
-        face_areas[face_idx] = dx
-        v1 = i
-        v2 = i + 1
-        face_vertices[face_idx] = [v1, v2]
-        vector_S_f[face_idx] = [0.0, -dx]  # Outward normal (downward)
-        vector_d_CE[face_idx] = [0.0, -dy / 2]
-        boundary_patches[face_idx] = 0  # bottom patch
-        boundary_types[face_idx] = [0, 3]  # wall velocity, zeroGradient pressure
-        boundary_values[face_idx] = [0.0, 0.0, 0.0]
-        d_Cb[face_idx] = dy / 2
-        face_idx += 1
+    # 4. Generate mesh
+    gmsh.model.mesh.generate(2)
 
-    # Top boundary (y=Ly) - moving lid
-    for i in range(nx):
-        owner = i + (ny - 1) * nx
-        owner_cells[face_idx] = owner
-        face_centers[face_idx] = [(i + 0.5) * dx, Ly]
-        face_areas[face_idx] = dx
-        v1 = i + ny * (nx + 1)
-        v2 = (i + 1) + ny * (nx + 1)
-        face_vertices[face_idx] = [v1, v2]
-        vector_S_f[face_idx] = [0.0, dx]  # Outward normal (upward)
-        vector_d_CE[face_idx] = [0.0, dy / 2]
-        boundary_patches[face_idx] = 1  # top patch
-        boundary_types[face_idx] = [0, 3]  # wall velocity, zeroGradient pressure
-        boundary_values[face_idx] = [lid_velocity, 0.0, 0.0]
-        d_Cb[face_idx] = dy / 2
-        face_idx += 1
+    # 5. Extract mesh data from gmsh (in-memory)
+    # Get nodes
+    node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
+    points = node_coords.reshape(-1, 3)[:, :2]  # Extract x, y coordinates
 
-    # Left boundary (x=0)
-    for j in range(ny):
-        owner = j * nx
-        owner_cells[face_idx] = owner
-        face_centers[face_idx] = [0.0, (j + 0.5) * dy]
-        face_areas[face_idx] = dy
-        v1 = j * (nx + 1)
-        v2 = (j + 1) * (nx + 1)
-        face_vertices[face_idx] = [v1, v2]
-        vector_S_f[face_idx] = [-dy, 0.0]  # Outward normal (leftward)
-        vector_d_CE[face_idx] = [-dx / 2, 0.0]
-        boundary_patches[face_idx] = 2  # left patch
-        boundary_types[face_idx] = [0, 3]  # wall velocity, zeroGradient pressure
-        boundary_values[face_idx] = [0.0, 0.0, 0.0]
-        d_Cb[face_idx] = dx / 2
-        face_idx += 1
+    # Build node tag to index map (gmsh tags are 1-indexed)
+    node_tag_to_idx = {int(tag): idx for idx, tag in enumerate(node_tags)}
 
-    # Right boundary (x=Lx)
-    for j in range(ny):
-        owner = (nx - 1) + j * nx
-        owner_cells[face_idx] = owner
-        face_centers[face_idx] = [Lx, (j + 0.5) * dy]
-        face_areas[face_idx] = dy
-        v1 = nx + j * (nx + 1)
-        v2 = nx + (j + 1) * (nx + 1)
-        face_vertices[face_idx] = [v1, v2]
-        vector_S_f[face_idx] = [dy, 0.0]  # Outward normal (rightward)
-        vector_d_CE[face_idx] = [dx / 2, 0.0]
-        boundary_patches[face_idx] = 3  # right patch
-        boundary_types[face_idx] = [0, 3]  # wall velocity, zeroGradient pressure
-        boundary_values[face_idx] = [0.0, 0.0, 0.0]
-        d_Cb[face_idx] = dx / 2
-        face_idx += 1
+    # Get quad elements (cell type 3 = quad)
+    elem_types, elem_tags_list, elem_node_tags_list = gmsh.model.mesh.getElements(2)
 
-    boundary_faces = np.arange(boundary_start, n_faces, dtype=np.int64)
+    # Find quad elements
+    quad_idx = None
+    for i, elem_type in enumerate(elem_types):
+        if elem_type == 3:  # Quad
+            quad_idx = i
+            break
 
-    # --- Compute unit vectors and other geometric quantities ---
-    unit_vector_n = np.zeros((n_faces, 2), dtype=np.float64)
-    unit_vector_e = np.zeros((n_faces, 2), dtype=np.float64)
+    if quad_idx is None:
+        gmsh.finalize()
+        raise ValueError("No quad elements found in mesh")
 
-    for f in range(n_faces):
-        # Unit normal (from surface vector)
-        S_mag = np.linalg.norm(vector_S_f[f])
-        if S_mag > 1e-12:
-            unit_vector_n[f] = vector_S_f[f] / S_mag
+    # Convert element node tags to 0-indexed array
+    elem_node_tags = elem_node_tags_list[quad_idx]
+    cells_raw = elem_node_tags.reshape(-1, 4)
 
-        # Unit vector e (along d_CE)
-        d_mag = np.linalg.norm(vector_d_CE[f])
-        if d_mag > 1e-12:
-            unit_vector_e[f] = vector_d_CE[f] / d_mag
+    # Convert gmsh node tags to 0-indexed
+    cells = np.array([[node_tag_to_idx[int(tag)] for tag in cell] for cell in cells_raw], dtype=np.int64)
 
-    # For structured orthogonal mesh, E_f = S_f and T_f = 0
-    vector_E_f = vector_S_f.copy()
-    vector_T_f = np.zeros((n_faces, 2), dtype=np.float64)
-    vector_skewness = np.zeros((n_faces, 2), dtype=np.float64)
+    # 6. Extract boundary edges
+    # Get physical groups (dimension 1 = lines/edges)
+    physical_groups = gmsh.model.getPhysicalGroups(1)
 
-    # Interpolation factors (0.5 for uniform grid)
-    face_interp_factors = np.full(n_faces, 0.5, dtype=np.float64)
+    physical_id_to_name = {}
+    boundary_lines_list = []
+    boundary_tags_list = []
 
-    # Reconstruction weights
-    rc_interp_weights = np.zeros(n_faces, dtype=np.float64)
-    for f in range(n_internal):
-        g_f = face_interp_factors[f]
-        delta_PN = np.linalg.norm(vector_d_CE[f])
-        if delta_PN > 1e-12 and g_f > 1e-12 and (1 - g_f) > 1e-12:
-            rc_interp_weights[f] = 1.0 / (g_f * (1 - g_f) * delta_PN)
+    for dim, tag in physical_groups:
+        name = gmsh.model.getPhysicalName(dim, tag)
+        physical_id_to_name[tag] = name
 
-    # Cell-to-face connectivity (padded)
-    max_faces_per_cell = 4  # Quads
-    cell_faces = np.full((n_cells, max_faces_per_cell), -1, dtype=np.int64)
+        # Get entities in this physical group
+        entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
 
-    # Count faces per cell
-    face_counts = np.zeros(n_cells, dtype=np.int32)
+        # Get elements (edges) for each entity
+        for entity in entities:
+            elem_types_1d, elem_tags_1d, elem_node_tags_1d = gmsh.model.mesh.getElements(dim, entity)
 
-    for f in range(n_faces):
-        owner = owner_cells[f]
-        cell_faces[owner, face_counts[owner]] = f
-        face_counts[owner] += 1
+            if len(elem_types_1d) > 0:
+                # Line elements (type 1)
+                line_node_tags = elem_node_tags_1d[0].reshape(-1, 2)
 
-        neighbor = neighbor_cells[f]
-        if neighbor >= 0:
-            cell_faces[neighbor, face_counts[neighbor]] = f
-            face_counts[neighbor] += 1
+                # Convert to 0-indexed
+                for line in line_node_tags:
+                    edge = [node_tag_to_idx[int(line[0])], node_tag_to_idx[int(line[1])]]
+                    boundary_lines_list.append(edge)
+                    boundary_tags_list.append(tag)
 
-    # Binary masks
-    face_boundary_mask = np.zeros(n_faces, dtype=np.int64)
-    face_boundary_mask[boundary_faces] = 1
+    boundary_lines = np.array(boundary_lines_list, dtype=np.int64)
+    boundary_tags = np.array(boundary_tags_list, dtype=np.int64)
 
-    face_flux_mask = np.ones(n_faces, dtype=np.int64)  # All active
+    # Finalize gmsh
+    gmsh.finalize()
 
-    # Create MeshData2D
-    mesh = MeshData2D(
-        cell_volumes=cell_volumes,
-        cell_centers=cell_centers,
-        face_areas=face_areas,
-        face_centers=face_centers,
-        owner_cells=owner_cells,
-        neighbor_cells=neighbor_cells,
-        cell_faces=cell_faces,
-        face_vertices=face_vertices,
-        vertices=vertices,
-        vector_S_f=vector_S_f,
-        vector_d_CE=vector_d_CE,
-        unit_vector_n=unit_vector_n,
-        unit_vector_e=unit_vector_e,
-        vector_E_f=vector_E_f,
-        vector_T_f=vector_T_f,
-        vector_skewness=vector_skewness,
-        face_interp_factors=face_interp_factors,
-        rc_interp_weights=rc_interp_weights,
-        internal_faces=internal_faces,
-        boundary_faces=boundary_faces,
-        boundary_patches=boundary_patches,
-        boundary_types=boundary_types,
-        boundary_values=boundary_values,
-        d_Cb=d_Cb,
-        face_boundary_mask=face_boundary_mask,
-        face_flux_mask=face_flux_mask,
+    # 7. Setup boundary conditions for lid-driven cavity
+    boundary_conditions = {
+        "bottom": {
+            "velocity": {"bc": "wall", "value": [0.0, 0.0]},
+            "pressure": {"bc": "neumann", "value": 0.0}
+        },
+        "right": {
+            "velocity": {"bc": "wall", "value": [0.0, 0.0]},
+            "pressure": {"bc": "neumann", "value": 0.0}
+        },
+        "top": {
+            "velocity": {"bc": "wall", "value": [lid_velocity, 0.0]},
+            "pressure": {"bc": "neumann", "value": 0.0}
+        },
+        "left": {
+            "velocity": {"bc": "wall", "value": [0.0, 0.0]},
+            "pressure": {"bc": "neumann", "value": 0.0}
+        }
+    }
+
+    # 8. Use existing mesh_loader infrastructure to build MeshData2D
+    return _build_meshdata2d(
+        points=points,
+        cells=cells,
+        boundary_lines=boundary_lines,
+        boundary_tags=boundary_tags,
+        physical_id_to_name=physical_id_to_name,
+        boundary_conditions=boundary_conditions
     )
-
-    return mesh
