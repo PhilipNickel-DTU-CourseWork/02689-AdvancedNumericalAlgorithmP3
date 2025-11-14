@@ -74,14 +74,13 @@ class FVSolver(LidDrivenCavitySolver):
             limiter=self.config.limiter,
         )
 
-        # Store solution in solver state
-        fields = result['fields']
-        self.p = fields['p']
-        self.U = np.column_stack([fields['u'], fields['v']])
-        self.mdot = result['mdot']
+        # Store convergence state
         self.converged = result['metadata']['converged']
         self.iterations = result['metadata']['iterations']
         self.residual_history = result['time_series']['residual']
+
+        # Store FV-specific data
+        self.mdot = result['mdot']
 
         # Return results directly (simple_algorithm already includes everything)
         return self._build_results(

@@ -61,15 +61,10 @@ class LidDrivenCavitySolver(ABC):
         # Create mesh (for FV solvers) or None (for spectral solvers)
         self._create_mesh()
 
-        # Solver state
+        # Solver state (to be populated by solve())
         self.converged = False
         self.iterations = 0
         self.residual_history = []
-
-        # Solution fields (to be populated by solve())
-        n_cells = nx * ny
-        self.U = np.zeros((n_cells, 2))  # Velocity field (n_cells x 2)
-        self.p = np.zeros(n_cells)       # Pressure field (n_cells)
 
         # Let subclass do solver-specific initialization
         self._setup_solver_specifics()
@@ -164,41 +159,6 @@ class LidDrivenCavitySolver(ABC):
         """
         pass
 
-    def get_velocity_field(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Return velocity field components.
-
-        Returns
-        -------
-        u : np.ndarray
-            x-component of velocity.
-        v : np.ndarray
-            y-component of velocity.
-        """
-        if self.U is None:
-            raise RuntimeError("Solver has not been run yet. Call solve() first.")
-        return self.U[:, 0], self.U[:, 1]
-
-    def get_pressure_field(self) -> np.ndarray:
-        """Return pressure field.
-
-        Returns
-        -------
-        p : np.ndarray
-            Pressure field.
-        """
-        if self.p is None:
-            raise RuntimeError("Solver has not been run yet. Call solve() first.")
-        return self.p
-
-    def get_grid_points(self) -> np.ndarray:
-        """Return grid point coordinates.
-
-        Returns
-        -------
-        grid_points : np.ndarray
-            Grid point coordinates (shape: n_points x 2).
-        """
-        return self.grid_points
 
     def _build_results(self, fields: dict, time_series: dict, solver_metadata: dict) -> Results:
         """Helper to build Results object with config metadata.
