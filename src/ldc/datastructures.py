@@ -26,12 +26,18 @@ class Config:
         Domain width (x-direction).
     Ly : float
         Domain height (y-direction).
+    nx : int
+        Number of grid points/cells in x-direction.
+    ny : int
+        Number of grid points/cells in y-direction.
     """
 
     Re: float = 100.0
     lid_velocity: float = 1.0
     Lx: float = 1.0
     Ly: float = 1.0
+    nx: int = 32
+    ny: int = 32
 
 
 @dataclass

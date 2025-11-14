@@ -37,16 +37,6 @@ class FVSolver(LidDrivenCavitySolver):
         # Initialize base solver (will call _setup_solver_specifics)
         super().__init__(config)
 
-    def _get_grid_size(self) -> Tuple[int, int]:
-        """Return grid dimensions from FV config.
-
-        Returns
-        -------
-        nx, ny : int
-            Number of grid cells in x and y directions.
-        """
-        return self.config.nx, self.config.ny
-
     def _setup_solver_specifics(self):
         """Create FV mesh structure from base class grid.
 
@@ -132,39 +122,3 @@ class FVSolver(LidDrivenCavitySolver):
         })
 
         return self._build_results(fields, time_series, metadata)
-
-    def get_velocity_field(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Return velocity field components.
-
-        Returns
-        -------
-        u : np.ndarray
-            x-component of velocity (shape: n_cells).
-        v : np.ndarray
-            y-component of velocity (shape: n_cells).
-        """
-        if self.U is None:
-            raise RuntimeError("Solver has not been run yet. Call solve() first.")
-        return self.U[:, 0], self.U[:, 1]
-
-    def get_pressure_field(self) -> np.ndarray:
-        """Return pressure field.
-
-        Returns
-        -------
-        p : np.ndarray
-            Pressure field (shape: n_cells).
-        """
-        if self.p is None:
-            raise RuntimeError("Solver has not been run yet. Call solve() first.")
-        return self.p
-
-    def get_cell_centers(self) -> np.ndarray:
-        """Return mesh cell centers for plotting.
-
-        Returns
-        -------
-        cell_centers : np.ndarray
-            Cell center coordinates (shape: n_cells x 2).
-        """
-        return self.mesh.cell_centers
