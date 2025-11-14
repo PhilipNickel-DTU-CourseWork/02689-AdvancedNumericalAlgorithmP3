@@ -1,8 +1,6 @@
-"""Mesh generation and loading utilities for finite volume and spectral solvers."""
+"""Simplified mesh generation for structured quad meshes."""
 
-from .structured_uniform import generate as generate_structured
-from .unstructured import generate as generate_unstructured
-from .mesh_loader import load_mesh
 from .mesh_data import MeshData2D
+from .structured_inmemory import create_structured_mesh_2d
 
-__all__ = ["generate_structured", "generate_unstructured", "load_mesh", "MeshData2D"]
+__all__ = ["MeshData2D", "create_structured_mesh_2d"]
