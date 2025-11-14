@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 import numpy as np
 
-from .datastructures import Config, Results
+from .datastructures import Config
 
 
 class LidDrivenCavitySolver(ABC):
@@ -61,10 +61,6 @@ class LidDrivenCavitySolver(ABC):
         # Create mesh (for FV solvers) or None (for spectral solvers)
         self._create_mesh()
 
-        # Solver state (to be populated by solve())
-        self.converged = False
-        self.iterations = 0
-        self.residual_history = []
 
         # Let subclass do solver-specific initialization
         self._setup_solver_specifics()
@@ -142,8 +138,13 @@ class LidDrivenCavitySolver(ABC):
         pass
 
     @abstractmethod
-    def solve(self, tolerance: float = 1e-6, max_iter: int = 1000) -> Results:
+    def solve(self, tolerance: float = 1e-6, max_iter: int = 1000):
         """Solve the lid-driven cavity problem.
+
+        Stores results in solver attributes:
+        - self.fields : Fields dataclass with solution fields
+        - self.time_series : TimeSeries dataclass with time series data
+        - self.metadata : Metadata dataclass with solver metadata
 
         Parameters
         ----------
@@ -151,87 +152,53 @@ class LidDrivenCavitySolver(ABC):
             Convergence tolerance.
         max_iter : int
             Maximum iterations.
-
-        Returns
-        -------
-        Results
-            Solution data with fields, time_series, and metadata.
         """
         pass
 
 
-    def _build_results(self, fields: dict, time_series: dict, solver_metadata: dict) -> Results:
-        """Helper to build Results object with config metadata.
-
-        Parameters
-        ----------
-        fields : dict
-            Spatial fields (u, v, p, etc.) as arrays.
-        time_series : dict
-            Time series data (residuals, etc.) as lists.
-        solver_metadata : dict
-            Solver-specific metadata (iterations, converged, etc.).
-
-        Returns
-        -------
-        Results
-            Complete results object.
-        """
-        # Combine config and solver metadata
-        metadata = {
-            'Re': self.config.Re,
-            'Lx': self.config.Lx,
-            'Ly': self.config.Ly,
-            'lid_velocity': self.config.lid_velocity,
-            'nx': self.nx,
-            'ny': self.ny,
-            **solver_metadata
-        }
-
-        return Results(
-            fields=fields,
-            time_series=time_series,
-            metadata=metadata
-        )
-
-    def save(self, filepath, results: Results):
+    def save(self, filepath):
         """Save results to HDF5 file.
 
         Parameters
         ----------
         filepath : str or Path
             Output file path.
-        results : Results
-            Results object to save.
         """
+        from dataclasses import asdict
         import h5py
         from pathlib import Path
 
         filepath = Path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
+        # Convert dataclasses to dicts
+        fields_dict = asdict(self.fields)
+        time_series_dict = asdict(self.time_series)
+        metadata_dict = asdict(self.metadata)
+
         with h5py.File(filepath, 'w') as f:
             # Save metadata as root-level attributes
-            for key, val in results.metadata.items():
+            for key, val in metadata_dict.items():
                 f.attrs[key] = val
 
             # Save fields in a fields group
             fields_grp = f.create_group('fields')
-            for key, val in results.fields.items():
+            for key, val in fields_dict.items():
                 fields_grp.create_dataset(key, data=val)
 
             # Add velocity magnitude if u and v are present
-            if 'u' in results.fields and 'v' in results.fields:
+            if 'u' in fields_dict and 'v' in fields_dict:
                 import numpy as np
-                vel_mag = np.sqrt(results.fields['u']**2 + results.fields['v']**2)
+                vel_mag = np.sqrt(fields_dict['u']**2 + fields_dict['v']**2)
                 fields_grp.create_dataset('velocity_magnitude', data=vel_mag)
 
             # Save grid_points at root level for compatibility
-            if 'grid_points' in results.fields:
-                f.create_dataset('grid_points', data=results.fields['grid_points'])
+            if 'grid_points' in fields_dict:
+                f.create_dataset('grid_points', data=fields_dict['grid_points'])
 
             # Save time series in a group
-            if results.time_series:
+            if time_series_dict:
                 ts_grp = f.create_group('time_series')
-                for key, val in results.time_series.items():
-                    ts_grp.create_dataset(key, data=val)
+                for key, val in time_series_dict.items():
+                    if val is not None:
+                        ts_grp.create_dataset(key, data=val)

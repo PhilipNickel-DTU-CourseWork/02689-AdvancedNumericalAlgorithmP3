@@ -48,7 +48,7 @@ def is_diagonally_dominant(A):
     dominance = np.all(diagonal >= off_diagonal_sum)
     return dominance
 
-def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection_scheme="TVD", limiter="MUSCL", progress_callback=None, interruption_flag=lambda: False, linear_solver_settings=None, transient=False, dt=0.0, end_time=0.0, time_scheme="Euler", results_dir=None, save_interval=0):
+def simple_algorithm(mesh, config, rho, mu, max_iter, tol, progress_callback=None, interruption_flag=lambda: False, linear_solver_settings=None, transient=False, dt=0.0, end_time=0.0, time_scheme="Euler", results_dir=None, save_interval=0):
     # Convert tolerance from string to float if needed
     tol = float(tol)
 
@@ -124,7 +124,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             # U-momentum spatial residual
             row_u, col_u, data_u, b_u = assemble_diffusion_convection_matrix(
                 mesh, mdot, grad_u_old, U_old_time, rho, mu, 0, phi=U_old_time[:,0], 
-                scheme=convection_scheme, limiter=limiter, pressure_field=p, 
+                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
                 grad_pressure_field=grad_p_old, transient=False
             )
             A_u_old = coo_matrix((data_u, (row_u, col_u)), shape=(n_cells, n_cells)).tocsr()
@@ -135,7 +135,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             # V-momentum spatial residual
             row_v, col_v, data_v, b_v = assemble_diffusion_convection_matrix(
                 mesh, mdot, grad_v_old, U_old_time, rho, mu, 1, phi=U_old_time[:,1], 
-                scheme=convection_scheme, limiter=limiter, pressure_field=p, 
+                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
                 grad_pressure_field=grad_p_old, transient=False
             )
             A_v_old = coo_matrix((data_v, (row_v, col_v)), shape=(n_cells, n_cells)).tocsr()
@@ -165,7 +165,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             phi_arg_u = U_old_time[:,0] if transient else U[:,0]
             row, col, data, b_u = assemble_diffusion_convection_matrix(
                 mesh, mdot, grad_u, U_prev_iter, rho, mu, 0, phi=phi_arg_u, 
-                scheme=convection_scheme, limiter=limiter, pressure_field=p, 
+                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
                 grad_pressure_field=grad_p, dt=dt, transient=transient, time_scheme=time_scheme
             )
             A_u = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
@@ -176,7 +176,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             rhs_u_unrelaxed = rhs_u.copy()
 
             # Relax
-            relaxed_A_u_diag, rhs_u = relax_momentum_equation(rhs_u, A_u_diag, U_prev_iter[:,0], alpha_uv)
+            relaxed_A_u_diag, rhs_u = relax_momentum_equation(rhs_u, A_u_diag, U_prev_iter[:,0], config.alpha_uv)
             A_u.setdiag(relaxed_A_u_diag)
 
             # solve
@@ -196,7 +196,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             phi_arg_v = U_old_time[:,1] if transient else U[:,1]
             row, col, data, b_v = assemble_diffusion_convection_matrix(
                 mesh, mdot, grad_v, U_prev_iter, rho, mu, 1, phi=phi_arg_v, 
-                scheme=convection_scheme, limiter=limiter, pressure_field=p, 
+                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
                 grad_pressure_field=grad_p, dt=dt, transient=transient, time_scheme=time_scheme
             )
             A_v = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
@@ -207,7 +207,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             rhs_v_unrelaxed = rhs_v.copy()
 
             # Relax
-            relaxed_A_v_diag, rhs_v = relax_momentum_equation(rhs_v, A_v_diag, U_prev_iter[:,1], alpha_uv)
+            relaxed_A_v_diag, rhs_v = relax_momentum_equation(rhs_v, A_v_diag, U_prev_iter[:,1], config.alpha_uv)
             A_v.setdiag(relaxed_A_v_diag)
 
             # solve
@@ -311,30 +311,44 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
     # Compute combined residual
     combined_residual = [max(u, v, c) for u, v, c in zip(u_l2norm, v_l2norm, continuity_l2norm)]
 
-    # Return u and v separately, residuals as dict of lists
-    return {
-        'fields': {
-            'u': U[:, 0],
-            'v': U[:, 1],
-            'p': p,
-            'x': mesh.cell_centers[:, 0],
-            'y': mesh.cell_centers[:, 1],
-            'grid_points': mesh.cell_centers,
-        },
-        'time_series': {
-            'residual': combined_residual,
-            'u_residual': u_l2norm,
-            'v_residual': v_l2norm,
-            'continuity_residual': continuity_l2norm,
-        },
-        'metadata': {
-            'iterations': final_iter_count,
-            'converged': is_converged,
-            'final_residual': combined_residual[-1] if combined_residual else float('inf'),
-            'convection_scheme': convection_scheme,
-            'limiter': limiter,
-            'alpha_uv': alpha_uv,
-            'alpha_p': alpha_p,
-        },
-        'mdot': mdot,  # Keep at top level for FVSolver to store
-    }
+    # Return FV-specific dataclass instances
+    from ldc.datastructures import FVFields, TimeSeries, FVMetadata
+
+    fields = FVFields(
+        u=U[:, 0],
+        v=U[:, 1],
+        p=p,
+        x=mesh.cell_centers[:, 0],
+        y=mesh.cell_centers[:, 1],
+        grid_points=mesh.cell_centers,
+        mdot=mdot,
+    )
+
+    time_series = TimeSeries(
+        residual=combined_residual,
+        u_residual=u_l2norm,
+        v_residual=v_l2norm,
+        continuity_residual=continuity_l2norm,
+    )
+
+    metadata = FVMetadata(
+        # Physics parameters from config
+        Re=config.Re,
+        lid_velocity=config.lid_velocity,
+        Lx=config.Lx,
+        Ly=config.Ly,
+        # Grid parameters from config
+        nx=config.nx,
+        ny=config.ny,
+        # Convergence info
+        iterations=final_iter_count,
+        converged=is_converged,
+        final_residual=combined_residual[-1] if combined_residual else float('inf'),
+        # FV-specific parameters from config
+        convection_scheme=config.convection_scheme,
+        limiter=config.limiter,
+        alpha_uv=config.alpha_uv,
+        alpha_p=config.alpha_p,
+    )
+
+    return fields, time_series, metadata

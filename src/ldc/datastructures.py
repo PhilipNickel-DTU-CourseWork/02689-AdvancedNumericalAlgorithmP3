@@ -10,6 +10,58 @@ import numpy as np
 
 
 @dataclass
+class Fields:
+    """Base spatial solution fields."""
+    u: np.ndarray
+    v: np.ndarray
+    p: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    grid_points: np.ndarray
+
+
+@dataclass
+class FVFields(Fields):
+    """FV-specific fields with mass flux."""
+    mdot: np.ndarray = None
+
+
+@dataclass
+class TimeSeries:
+    """Time series data common to all solvers."""
+    residual: List[float]
+    u_residual: List[float] = None
+    v_residual: List[float] = None
+    continuity_residual: List[float] = None
+
+
+@dataclass
+class Metadata:
+    """Base solver metadata combining config and convergence info."""
+    # Physics parameters
+    Re: float
+    lid_velocity: float
+    Lx: float
+    Ly: float
+    # Grid parameters
+    nx: int
+    ny: int
+    # Convergence info
+    iterations: int
+    converged: bool
+    final_residual: float
+
+
+@dataclass
+class FVMetadata(Metadata):
+    """FV-specific metadata with discretization parameters."""
+    convection_scheme: str = None
+    limiter: str = None
+    alpha_uv: float = None
+    alpha_p: float = None
+
+
+@dataclass
 class Config:
     """Base configuration with shared physics parameters.
 
@@ -44,14 +96,10 @@ class Config:
 class FVConfig(Config):
     """Finite volume solver configuration.
 
-    Inherits physics parameters (Re, Lx, Ly, lid_velocity) from Config.
+    Inherits physics parameters (Re, Lx, Ly, lid_velocity, nx, ny) from Config.
 
     Parameters
     ----------
-    nx : int
-        Number of cells in x-direction.
-    ny : int
-        Number of cells in y-direction.
     convection_scheme : str
         Convection discretization ('upwind', 'TVD', 'central').
     limiter : str
@@ -62,8 +110,6 @@ class FVConfig(Config):
         Under-relaxation factor for pressure correction.
     """
 
-    nx: int = 32
-    ny: int = 32
     convection_scheme: str = "TVD"
     limiter: str = "MUSCL"
     alpha_uv: float = 0.7
@@ -106,35 +152,3 @@ class SpectralConfig(Config):
     mg_levels: int = 3
 
 
-@dataclass
-class Results:
-    """Container for all solver results grouped by dimensionality.
-
-    This structure organizes data by dimensionality for clean HDF5 storage
-    and pandas integration:
-    - fields: spatial data (n_cells dimension)
-    - time_series: temporal data (n_iterations dimension)
-    - metadata: scalar configuration and convergence info
-
-    Parameters
-    ----------
-    fields : Dict[str, np.ndarray]
-        Spatial solution fields (u, v, p) with shape (n_cells,).
-    time_series : Dict[str, List]
-        Time-series data (residuals, etc.) as lists (length = n_iterations).
-        Lists are more natural since length is unknown during solving.
-    metadata : Dict[str, Any]
-        Scalar metadata including solver config and convergence info.
-
-    Examples
-    --------
-    >>> results = Results(
-    ...     fields={'u': u_array, 'v': v_array, 'p': p_array},
-    ...     time_series={'residual': [0.1, 0.05, 0.01, ...]},
-    ...     metadata={'Re': 100.0, 'iterations': 250, 'converged': True}
-    ... )
-    """
-
-    fields: Dict[str, np.ndarray]
-    time_series: Dict[str, List]
-    metadata: Dict[str, Any]

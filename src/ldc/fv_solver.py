@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Tuple
 
 from .base_solver import LidDrivenCavitySolver
-from .datastructures import FVConfig, Results
+from .datastructures import FVConfig
 
 
 class FVSolver(LidDrivenCavitySolver):
@@ -40,7 +40,7 @@ class FVSolver(LidDrivenCavitySolver):
         """
         super().__init__(**kwargs)
 
-    def solve(self, tolerance: float = 1e-6, max_iter: int = 1000) -> Results:
+    def solve(self, tolerance: float = 1e-6, max_iter: int = 1000):
         """Run the SIMPLE algorithm until convergence.
 
         Parameters
@@ -49,11 +49,6 @@ class FVSolver(LidDrivenCavitySolver):
             Convergence tolerance for residual norm.
         max_iter : int
             Maximum number of iterations.
-
-        Returns
-        -------
-        Results
-            Solution data including velocity, pressure, and convergence info.
         """
         from fv.core.simple_algorithm import simple_algorithm
 
@@ -61,30 +56,12 @@ class FVSolver(LidDrivenCavitySolver):
         print(f"Starting FV solver with SIMPLE algorithm (Re={self.config.Re}, "
               f"n_cells={n_cells})")
 
-        # Run SIMPLE algorithm (returns dictionary)
-        result = simple_algorithm(
+        # Run SIMPLE algorithm - unpack directly into solver state
+        self.fields, self.time_series, self.metadata = simple_algorithm(
             mesh=self.mesh,
-            alpha_uv=self.config.alpha_uv,
-            alpha_p=self.config.alpha_p,
+            config=self.config,
             rho=self.rho,
             mu=self.mu,
             max_iter=max_iter,
             tol=tolerance,
-            convection_scheme=self.config.convection_scheme,
-            limiter=self.config.limiter,
-        )
-
-        # Store convergence state
-        self.converged = result['metadata']['converged']
-        self.iterations = result['metadata']['iterations']
-        self.residual_history = result['time_series']['residual']
-
-        # Store FV-specific data
-        self.mdot = result['mdot']
-
-        # Return results directly (simple_algorithm already includes everything)
-        return self._build_results(
-            fields=result['fields'],
-            time_series=result['time_series'],
-            solver_metadata=result['metadata']
         )

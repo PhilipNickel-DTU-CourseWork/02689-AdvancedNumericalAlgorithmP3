@@ -15,7 +15,11 @@ from .datastructures import (
     Config,
     FVConfig,
     SpectralConfig,
-    Results,
+    Fields,
+    FVFields,
+    TimeSeries,
+    Metadata,
+    FVMetadata,
 )
 from .fv_solver import FVSolver
 from .spectral_solver import SpectralSolver
@@ -27,7 +31,12 @@ __all__ = [
     "Config",
     "FVConfig",
     "SpectralConfig",
-    "Results",
+    # Data structures
+    "Fields",
+    "FVFields",
+    "TimeSeries",
+    "Metadata",
+    "FVMetadata",
     # Concrete solvers
     "FVSolver",
     "SpectralSolver",
