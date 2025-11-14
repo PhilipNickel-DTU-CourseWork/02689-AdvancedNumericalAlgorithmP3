@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Tuple
 
 from .base_solver import LidDrivenCavitySolver
-from .datastructures import SolverConfig, FVConfig, Results
+from .datastructures import SolverConfig, FVConfig, Results, SolutionFields, ConvergenceResults
 
 
 class FVSolver(LidDrivenCavitySolver):
@@ -137,15 +137,17 @@ class FVSolver(LidDrivenCavitySolver):
         self.residual_history = combined_residuals.tolist()
 
         # Package results
-        results = Results(
-            u=U[:, 0],
-            v=U[:, 1],
-            p=p,
-            res_his=self.residual_history,
+        fields = SolutionFields(u=U[:, 0], v=U[:, 1], p=p)
+        convergence = ConvergenceResults(
             iterations=iterations,
             converged=converged,
             final_alg_residual=combined_residuals[-1] if len(combined_residuals) > 0 else float('inf'),
             wall_time=0.0,  # simple_algorithm doesn't return wall time directly
+        )
+        results = Results(
+            convergence=convergence,
+            fields=fields,
+            res_his=self.residual_history,
         )
 
         return results
@@ -185,3 +187,8 @@ class FVSolver(LidDrivenCavitySolver):
             Cell center coordinates (shape: n_cells x 2).
         """
         return self.mesh.cell_centers
+
+    def get_solver_specific_config(self):
+        """Return FV-specific configuration."""
+        from dataclasses import asdict
+        return asdict(self.fv_config)

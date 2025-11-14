@@ -96,8 +96,8 @@ class SpectralConfig:
 
 
 @dataclass
-class Results:
-    """Container for solver results.
+class SolutionFields:
+    """Container for spatial solution fields.
 
     Parameters
     ----------
@@ -107,8 +107,19 @@ class Results:
         y-component of velocity field.
     p : np.ndarray
         Pressure field.
-    res_his : List[float]
-        Residual history over iterations.
+    """
+
+    u: np.ndarray
+    v: np.ndarray
+    p: np.ndarray
+
+
+@dataclass
+class ConvergenceResults:
+    """Container for convergence metadata.
+
+    Parameters
+    ----------
     iterations : int
         Total number of iterations performed.
     converged : bool
@@ -119,13 +130,28 @@ class Results:
         Total wall-clock time in seconds.
     """
 
-    u: Optional[np.ndarray] = None
-    v: Optional[np.ndarray] = None
-    p: Optional[np.ndarray] = None
-    res_his: List[float] = field(default_factory=list)
     iterations: int = 0
     converged: bool = False
     final_alg_residual: float = float('inf')
     wall_time: float = 0.0
+
+
+@dataclass
+class Results:
+    """Container for all solver results.
+
+    Parameters
+    ----------
+    convergence : ConvergenceResults
+        Convergence metadata.
+    fields : SolutionFields
+        Spatial solution fields (u, v, p).
+    res_his : List[float]
+        Residual history over iterations.
+    """
+
+    convergence: ConvergenceResults
+    fields: SolutionFields
+    res_his: List[float] = field(default_factory=list)
 
 

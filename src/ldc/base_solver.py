@@ -1,11 +1,14 @@
 """Abstract base solver for lid-driven cavity problem."""
 
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Tuple, Dict, Any
 import sys
 from pathlib import Path
 import yaml
 import numpy as np
+import pandas as pd
+import pyvista as pv
+from dataclasses import asdict
 
 from .datastructures import SolverConfig, Results
 
@@ -92,6 +95,17 @@ class LidDrivenCavitySolver(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_cell_centers(self) -> np.ndarray:
+        """Return spatial coordinates for solution fields.
+
+        Returns
+        -------
+        coordinates : np.ndarray
+            Spatial coordinates (shape: n_points x 2).
+        """
+        pass
+
     # ---- Shared methods: mesh/grid and BC setup ----
 
     def _create_lid_driven_cavity_bc_config(self) -> dict:
@@ -163,3 +177,76 @@ class LidDrivenCavitySolver(ABC):
 
         # Load mesh with BC config
         self.mesh = load_mesh(mesh_path, bc_config_file=str(bc_config_file))
+
+    def get_solver_specific_config(self) -> Dict[str, Any]:
+        """Return solver-specific configuration.
+
+        Returns
+        -------
+        dict
+            Solver-specific configuration. Override in subclasses.
+        """
+        return {}
+
+    def save_fields(self, output_path: Path, results: Results):
+        """Save spatial solution fields to VTK file.
+
+        Parameters
+        ----------
+        output_path : Path
+            Output file path (should end in .vtp).
+        results : Results
+            Solution results containing fields.
+        """
+        # Get spatial coordinates
+        cell_centers = self.get_cell_centers()
+        points = np.column_stack([
+            cell_centers[:, 0],
+            cell_centers[:, 1],
+            np.zeros(len(cell_centers))
+        ])
+
+        # Create point cloud
+        cloud = pv.PolyData(points)
+        cloud['u'] = results.fields.u
+        cloud['v'] = results.fields.v
+        cloud['p'] = results.fields.p
+        cloud['velocity_magnitude'] = np.sqrt(
+            results.fields.u**2 + results.fields.v**2
+        )
+
+        # Save to VTK
+        cloud.save(output_path)
+
+    def save_data(self, output_path: Path, results: Results):
+        """Save metadata and time-series to Parquet file.
+
+        Parameters
+        ----------
+        output_path : Path
+            Output file path (should end in .parquet).
+        results : Results
+            Solution results containing convergence info and residuals.
+        """
+        # Config - combine solver and solver-specific config
+        config_df = pd.concat([
+            pd.DataFrame([asdict(self.solver_config)]),
+            pd.DataFrame([self.get_solver_specific_config()])
+        ], axis=1).assign(data_type='config', index=0)
+
+        # Results - convergence info
+        results_df = pd.DataFrame([asdict(results.convergence)]).assign(
+            data_type='results', index=0
+        )
+
+        # Residuals - time-series
+        residuals_df = pd.DataFrame(
+            results.res_his, columns=['residual']
+        ).reset_index().assign(data_type='residuals')
+
+        # Combine and set MultiIndex
+        all_data = pd.concat([config_df, results_df, residuals_df], ignore_index=True)
+        all_data = all_data.set_index(['data_type', 'index'])
+
+        # Save to Parquet
+        all_data.to_parquet(output_path)
