@@ -34,32 +34,16 @@ class FVSolver(LidDrivenCavitySolver):
         config : FVConfig
             Finite volume configuration with physics and numerics.
         """
-        # Initialize base solver (will call _setup_solver_specifics)
+        # Initialize base solver (creates grid and mesh)
         super().__init__(config)
 
-    def _setup_solver_specifics(self):
-        """Create FV mesh structure from base class grid.
-
-        This method is called by base class after grid creation.
-        Creates MeshData2D directly in memory (no files).
-        """
-        from meshing.structured_inmemory import create_structured_mesh_2d
-
-        # Create MeshData2D object (numba jitclass)
-        self.mesh = create_structured_mesh_2d(
-            nx=self.nx,
-            ny=self.ny,
-            Lx=self.config.Lx,
-            Ly=self.config.Ly,
-            lid_velocity=self.config.lid_velocity
-        )
-
-        # Initialize solution fields
-        n_cells = self.nx * self.ny
+        # Initialize FV-specific mass flux field
         n_faces = self.mesh.face_areas.shape[0]
-        self.U = np.zeros((n_cells, 2))
-        self.p = np.zeros(n_cells)
         self.mdot = np.zeros(n_faces)
+
+    def _setup_solver_specifics(self):
+        """FV solver has no additional setup beyond __init__."""
+        pass
 
     def solve(self, tolerance: float = 1e-6, max_iter: int = 1000) -> Results:
         """Run the SIMPLE algorithm until convergence.

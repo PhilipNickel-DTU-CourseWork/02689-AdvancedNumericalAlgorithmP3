@@ -66,6 +66,10 @@ class SpectralSolver(LidDrivenCavitySolver):
         """
         return self.config.Nx, self.config.Ny
 
+    def _create_mesh(self):
+        """Spectral solvers don't need FV mesh."""
+        self.mesh = None
+
     def _setup_solver_specifics(self):
         """Setup spectral differentiation operators.
 

@@ -46,14 +46,18 @@ class LidDrivenCavitySolver(ABC):
         # Create uniform structured grid (common for all solvers)
         self._create_uniform_grid(nx, ny)
 
+        # Create mesh (for FV solvers) or None (for spectral solvers)
+        self._create_mesh()
+
         # Solver state
         self.converged = False
         self.iterations = 0
         self.residual_history = []
 
         # Solution fields (to be populated by solve())
-        self.U = None  # Velocity field (n_cells x 2)
-        self.p = None  # Pressure field (n_cells)
+        n_cells = nx * ny
+        self.U = np.zeros((n_cells, 2))  # Velocity field (n_cells x 2)
+        self.p = np.zeros(n_cells)       # Pressure field (n_cells)
 
         # Let subclass do solver-specific initialization
         self._setup_solver_specifics()
@@ -102,6 +106,22 @@ class LidDrivenCavitySolver(ABC):
 
         # Flattened grid points for compatibility
         self.grid_points = np.column_stack([self.X.flatten(), self.Y.flatten()])
+
+    def _create_mesh(self):
+        """Create FV mesh structure.
+
+        Default implementation creates a structured FV mesh using gmsh.
+        Spectral solvers can override this to set self.mesh = None.
+        """
+        from meshing.structured_inmemory import create_structured_mesh_2d
+
+        self.mesh = create_structured_mesh_2d(
+            nx=self.nx,
+            ny=self.ny,
+            Lx=self.config.Lx,
+            Ly=self.config.Ly,
+            lid_velocity=self.config.lid_velocity
+        )
 
     @abstractmethod
     def _setup_solver_specifics(self):
