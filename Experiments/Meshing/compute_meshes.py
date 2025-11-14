@@ -2,15 +2,11 @@
 """Generate meshes for lid-driven cavity problem."""
 
 # %% Imports
-import sys
 from pathlib import Path
 import gmsh
 import yaml
-
-repo_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(repo_root / "src"))
-
 from meshing import generate_structured
+from utils import get_project_root
 
 # %% Load configuration
 config_file = Path(__file__).parent / "experiments.yaml"
@@ -20,7 +16,8 @@ with open(config_file) as f:
 resolutions = config["lidDrivenCavity"]["uniform"]["resolutions"]
 
 # %% Setup directories
-data_dir = repo_root / "data" / "meshes"
+project_root = get_project_root()
+data_dir = project_root / "data" / "meshes"
 (data_dir / "structured").mkdir(parents=True, exist_ok=True)
 (data_dir / "unstructured").mkdir(parents=True, exist_ok=True)
 

@@ -1,15 +1,11 @@
-"""Utility modules for data handling, plotting, and CLI.
-
-Import conveniences:
-- from utils import datatools  # For data operations
-- from utils import plotting    # For plotting operations
-- from utils import cli         # For command-line argument parsing
-"""
+"""Utility modules for plotting and project management."""
 
 from pathlib import Path
-from . import datatools, plotting, cli
+from . import plotting
+from .ldc_plotter import LDCPlotter
+from .ghia_validator import GhiaValidator
 
-__all__ = ["datatools", "plotting", "cli", "get_project_root"]
+__all__ = ["plotting", "get_project_root", "LDCPlotter", "GhiaValidator"]
 
 
 def get_project_root() -> Path:

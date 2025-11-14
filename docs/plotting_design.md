@@ -12,7 +12,7 @@ Dedicated class for Ghia et al. (1982) benchmark validation.
 
 ### Single Run
 ```python
-from utils.plotting import LDCPlotter, GhiaValidator
+from utils import LDCPlotter, GhiaValidator
 
 # Field plots
 plotter = LDCPlotter({
@@ -45,7 +45,7 @@ validator.plot_validation(output_path="figures/ghia_validation.pdf")
 ### Example: Mesh Convergence Study
 
 ```python
-from utils.plotting import LDCPlotter, GhiaValidator
+from utils import LDCPlotter, GhiaValidator
 
 # Define runs to compare
 runs = [

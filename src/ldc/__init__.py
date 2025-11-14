@@ -9,7 +9,6 @@ from .datastructures import (
     SolverConfig,
     RuntimeConfig,
     FVConfig,
-    SpectralConfig,
     Results,
 )
 from .fv_solver import FVSolver
@@ -19,7 +18,6 @@ __all__ = [
     "SolverConfig",
     "RuntimeConfig",
     "FVConfig",
-    "SpectralConfig",
     "Results",
     "FVSolver",
 ]

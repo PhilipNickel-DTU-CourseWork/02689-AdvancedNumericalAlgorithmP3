@@ -77,25 +77,6 @@ class FVConfig:
 
 
 @dataclass
-class SpectralConfig:
-    """Pseudo-spectral solver-specific configuration.
-
-    Parameters
-    ----------
-    N : int
-        Number of spectral modes or polynomial order.
-    basis : str
-        Spectral basis ('fourier', 'chebyshev').
-    dealiasing : bool
-        Use 3/2 rule for dealiasing.
-    """
-
-    N: int = 64
-    basis: str = "fourier"
-    dealiasing: bool = True
-
-
-@dataclass
 class SolutionFields:
     """Container for spatial solution fields.
 

@@ -2,20 +2,16 @@
 """Visualize all meshes in data/meshes/."""
 
 # %% Imports
-import sys
 from pathlib import Path
-
-repo_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(repo_root / "src"))
-
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
 import meshio
-from utils import plotting  # Apply proper styling
+from utils import plotting, get_project_root  # Apply proper styling
 
 # %% Setup directories
-data_dir = repo_root / "data" / "meshes"
-figures_dir = repo_root / "figures" / "meshes"
+project_root = get_project_root()
+data_dir = project_root / "data" / "meshes"
+figures_dir = project_root / "figures" / "meshes"
 figures_dir.mkdir(parents=True, exist_ok=True)
 
 print("=" * 60)

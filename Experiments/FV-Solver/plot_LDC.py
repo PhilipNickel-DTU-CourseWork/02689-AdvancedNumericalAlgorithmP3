@@ -2,8 +2,7 @@
 """Plot lid-driven cavity solution."""
 
 # %% Imports
-from utils import get_project_root
-from utils.plotting import LDCPlotter, GhiaValidator
+from utils import get_project_root, LDCPlotter, GhiaValidator
 
 # %% Setup paths
 project_root = get_project_root()

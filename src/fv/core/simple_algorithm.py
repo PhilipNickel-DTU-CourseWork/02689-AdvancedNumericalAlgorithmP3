@@ -4,7 +4,6 @@ import numpy.linalg as la
 from scipy.sparse import coo_matrix
 from fv.assembly.convection_diffusion_matrix import assemble_diffusion_convection_matrix
 from fv.discretization.gradient.leastSquares import compute_cell_gradients
-#from fv.discretization.gradient.gauss import compute_cell_gradients
 from fv.linear_solvers.scipy_solver import scipy_solver
 from fv.assembly.rhie_chow import mdot_calculation, rhie_chow_velocity
 from fv.assembly.pressure_correction_eq_assembly import assemble_pressure_correction_matrix, pressure_correction_loop_term
