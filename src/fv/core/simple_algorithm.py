@@ -317,6 +317,9 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             'u': U[:, 0],
             'v': U[:, 1],
             'p': p,
+            'x': mesh.cell_centers[:, 0],
+            'y': mesh.cell_centers[:, 1],
+            'grid_points': mesh.cell_centers,
         },
         'time_series': {
             'residual': combined_residual,
@@ -328,6 +331,10 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             'iterations': final_iter_count,
             'converged': is_converged,
             'final_residual': combined_residual[-1] if combined_residual else float('inf'),
+            'convection_scheme': convection_scheme,
+            'limiter': limiter,
+            'alpha_uv': alpha_uv,
+            'alpha_p': alpha_p,
         },
         'mdot': mdot,  # Keep at top level for FVSolver to store
     }

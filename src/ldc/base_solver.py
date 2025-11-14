@@ -135,14 +135,14 @@ class LidDrivenCavitySolver(ABC):
             lid_velocity=self.config.lid_velocity
         )
 
-    @abstractmethod
     def _setup_solver_specifics(self):
-        """Solver-specific initialization.
+        """Solver-specific initialization (optional).
 
-        Called after grid creation. Use this to:
-        - Create solver-specific data structures (FV mesh, spectral operators, etc.)
-        - Initialize solution fields
-        - Setup any other solver-specific state
+        Called after grid creation. Override this to:
+        - Create solver-specific data structures (spectral operators, etc.)
+        - Initialize additional solver-specific state
+
+        Default implementation does nothing.
         """
         pass
 

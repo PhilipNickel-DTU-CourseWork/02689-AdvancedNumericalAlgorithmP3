@@ -74,30 +74,18 @@ class FVSolver(LidDrivenCavitySolver):
             limiter=self.config.limiter,
         )
 
-        # Extract data from result dictionary
+        # Store solution in solver state
         fields = result['fields']
-        time_series = result['time_series']
-        metadata = result['metadata']
-
-        # Store solution
         self.p = fields['p']
         self.U = np.column_stack([fields['u'], fields['v']])
         self.mdot = result['mdot']
-        self.converged = metadata['converged']
-        self.iterations = metadata['iterations']
-        self.residual_history = time_series['residual']
+        self.converged = result['metadata']['converged']
+        self.iterations = result['metadata']['iterations']
+        self.residual_history = result['time_series']['residual']
 
-        # Add coordinates to fields
-        fields['x'] = self.mesh.cell_centers[:, 0]
-        fields['y'] = self.mesh.cell_centers[:, 1]
-        fields['grid_points'] = self.mesh.cell_centers
-
-        # Add solver-specific metadata
-        metadata.update({
-            'convection_scheme': self.config.convection_scheme,
-            'limiter': self.config.limiter,
-            'alpha_uv': self.config.alpha_uv,
-            'alpha_p': self.config.alpha_p
-        })
-
-        return self._build_results(fields, time_series, metadata)
+        # Return results directly (simple_algorithm already includes everything)
+        return self._build_results(
+            fields=result['fields'],
+            time_series=result['time_series'],
+            solver_metadata=result['metadata']
+        )
