@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
-import pyvista as pv
+import h5py
 
 
 class GhiaValidator:
@@ -18,9 +18,9 @@ class GhiaValidator:
     Parameters
     ----------
     Re : float
-        Reynolds number of the simulation.
-    fields_path : Path or str
-        Path to VTK file with solution fields.
+        Reynolds number of the simulation (can also be inferred from HDF5 file).
+    h5_path : Path or str
+        Path to HDF5 file with solution fields.
     validation_data_dir : Path or str, optional
         Directory containing Ghia CSV files. If None, uses default location.
     """
@@ -29,25 +29,29 @@ class GhiaValidator:
 
     def __init__(
         self,
-        Re: float,
-        fields_path: Path | str,
+        h5_path: Path | str,
+        Re: Optional[float] = None,
         validation_data_dir: Optional[Path | str] = None
     ):
-        """Initialize validator and load solution fields from VTK file."""
-        self.Re = Re
-        self.fields_path = Path(fields_path)
+        """Initialize validator and load solution fields from HDF5 file."""
+        self.h5_path = Path(h5_path)
 
-        # Load solution fields from VTK
-        mesh = pv.read(self.fields_path)
-        self.cell_centers = mesh.points[:, :2]  # Extract x, y coordinates
-        self.u = mesh['u']
-        self.v = mesh['v']
+        # Load solution fields from HDF5
+        with h5py.File(self.h5_path, 'r') as f:
+            # Get Re from metadata or use provided value
+            self.Re = Re if Re is not None else f.attrs['Re']
+
+            # Load fields
+            grid_points = f['grid_points'][:]
+            self.cell_centers = grid_points[:, :2]
+            self.u = f['fields/u'][:]
+            self.v = f['fields/v'][:]
 
         # Find closest available Reynolds number
-        self.Re_closest = min(self.AVAILABLE_RE, key=lambda x: abs(x - Re))
-        if abs(self.Re_closest - Re) > 0.1 * Re:
+        self.Re_closest = min(self.AVAILABLE_RE, key=lambda x: abs(x - self.Re))
+        if abs(self.Re_closest - self.Re) > 0.1 * self.Re:
             print(f"Warning: Using Ghia data for Re={self.Re_closest}, "
-                  f"requested Re={Re}")
+                  f"requested Re={self.Re}")
 
         # Set validation data directory
         if validation_data_dir is None:

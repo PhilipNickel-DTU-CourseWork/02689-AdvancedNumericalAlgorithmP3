@@ -8,27 +8,43 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-import pyvista as pv
+import h5py
+import numpy as np
 
 
 class LDCPlotter:
     """Plotter for lid-driven cavity simulation results.
 
-    Handles both single and multiple runs for comparison.
+    Handles both single and multiple runs for comparison using HDF5 files.
 
     Parameters
     ----------
-    runs : dict or list of dict
-        Single run dict or list of run dicts. Each dict should contain:
-        - 'data_path': Path to parquet file
-        - 'fields_path': Path to VTK file (optional)
-        - 'label': Label for this run (required for multiple runs)
+    runs : dict, str, Path, or list
+        Single run or list of runs. Can be:
+        - str/Path: Path to HDF5 file
+        - dict: Dictionary with 'h5_path' (and optionally 'label')
+        - list: List of any of the above (requires 'label' in dicts)
+
+    Examples
+    --------
+    >>> # Single run
+    >>> plotter = LDCPlotter('run.h5')
+    >>> plotter.plot_convergence()
+
+    >>> # Multiple runs with labels
+    >>> plotter = LDCPlotter([
+    ...     {'h5_path': 'run1.h5', 'label': '32x32'},
+    ...     {'h5_path': 'run2.h5', 'label': '64x64'}
+    ... ])
     """
 
-    def __init__(self, runs: dict | list[dict]):
+    def __init__(self, runs: dict | str | Path | list):
         """Initialize plotter and load data."""
-        # Normalize to list
-        if isinstance(runs, dict):
+        # Normalize to list of dicts
+        if isinstance(runs, (str, Path)):
+            self.runs = [{'h5_path': runs}]
+            self.single_run = True
+        elif isinstance(runs, dict):
             self.runs = [runs]
             self.single_run = True
         else:
@@ -38,57 +54,56 @@ class LDCPlotter:
         # Validate and load all runs
         self.run_data = []
         for i, run in enumerate(self.runs):
+            # Normalize run to dict if it's a path
+            if isinstance(run, (str, Path)):
+                run = {'h5_path': run}
             run_info = self._load_run(run, run_idx=i)
             self.run_data.append(run_info)
 
-        # For single run, expose data at top level for backward compatibility
+        # For single run, expose data at top level
         if self.single_run:
             rd = self.run_data[0]
-            self.data = rd['data']
             self.Re = rd['Re']
             self.residuals = rd['residuals']
-            self.points = rd['points']
             self.x = rd['x']
             self.y = rd['y']
             self.u = rd['u']
             self.v = rd['v']
             self.p = rd['p']
             self.vel_mag = rd['vel_mag']
-            self.fields_path = rd['fields_path']
+            self.h5_path = rd['h5_path']
 
     def _load_run(self, run: dict, run_idx: int) -> dict:
-        """Load data for a single run."""
-        data_path = Path(run['data_path'])
-        fields_path = Path(run['fields_path']) if 'fields_path' in run else None
+        """Load data for a single run from HDF5 file."""
+        h5_path = Path(run['h5_path'])
 
-        # Load metadata and residuals
-        data = pd.read_parquet(data_path)
-        Re = data.loc['config', 'Re'].iloc[0]
-        residuals = data.loc['residuals', 'residual'].values
+        if not h5_path.exists():
+            raise FileNotFoundError(f"HDF5 file not found: {h5_path}")
 
-        # Load spatial fields if available
-        if fields_path and fields_path.exists():
-            mesh = pv.read(fields_path)
-            points = mesh.points
-            x = points[:, 0]
-            y = points[:, 1]
-            u = mesh['u']
-            v = mesh['v']
-            p = mesh['p']
-            vel_mag = mesh['velocity_magnitude']
-        else:
-            points = x = y = u = v = p = vel_mag = None
+        with h5py.File(h5_path, 'r') as f:
+            # Load metadata
+            Re = f.attrs['Re']
 
-        # Get label (use provided or generate from run index)
+            # Load time-series
+            residuals = f['time_series/residual'][:]
+
+            # Load spatial fields
+            grid_points = f['grid_points'][:]
+            x = grid_points[:, 0]
+            y = grid_points[:, 1]
+            u = f['fields/u'][:]
+            v = f['fields/v'][:]
+            p = f['fields/p'][:]
+            vel_mag = f['fields/velocity_magnitude'][:]
+
+        # Get label (use provided or generate from filename)
         if not self.single_run and 'label' not in run:
             raise ValueError(f"Run {run_idx} missing 'label' key (required for multiple runs)")
-        label = run.get('label', 'Run')
+        label = run.get('label', h5_path.stem)
 
         return {
-            'data': data,
             'Re': Re,
             'residuals': residuals,
-            'points': points,
             'x': x,
             'y': y,
             'u': u,
@@ -96,8 +111,7 @@ class LDCPlotter:
             'p': p,
             'vel_mag': vel_mag,
             'label': label,
-            'data_path': data_path,
-            'fields_path': fields_path
+            'h5_path': h5_path
         }
 
     def plot_convergence(self, output_path: Optional[Path | str] = None, show: bool = False):
@@ -166,8 +180,8 @@ class LDCPlotter:
         show : bool, default False
             Whether to show the plot.
         """
-        if self.points is None:
-            raise ValueError("Fields data not available. Provide fields_path during initialization.")
+        if not self.single_run:
+            raise ValueError("Field plotting only available for single run.")
 
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
@@ -214,8 +228,8 @@ class LDCPlotter:
         show : bool, default False
             Whether to show the plot.
         """
-        if self.points is None:
-            raise ValueError("Fields data not available. Provide fields_path during initialization.")
+        if not self.single_run:
+            raise ValueError("Field plotting only available for single run.")
 
         fig, ax = plt.subplots(figsize=(8, 7))
         cf = ax.tricontourf(self.x, self.y, self.p, levels=20, cmap='coolwarm')

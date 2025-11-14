@@ -4,8 +4,23 @@ from pathlib import Path
 from . import plotting
 from .ldc_plotter import LDCPlotter
 from .ghia_validator import GhiaValidator
+from .data_io import (
+    load_run_data,
+    load_fields,
+    load_metadata,
+    load_multiple_runs,
+)
 
-__all__ = ["plotting", "get_project_root", "LDCPlotter", "GhiaValidator"]
+__all__ = [
+    "plotting",
+    "get_project_root",
+    "LDCPlotter",
+    "GhiaValidator",
+    "load_run_data",
+    "load_fields",
+    "load_metadata",
+    "load_multiple_runs",
+]
 
 
 def get_project_root() -> Path:

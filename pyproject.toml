@@ -7,7 +7,7 @@ name = "ana_p3"
 version = "0.1.0"
 description = "Package for project 3 in Advanced Numerical Algorithms Course"
 readme = "README.md"
-requires-python = "==3.13.*"
+requires-python = "==3.12.*"
 license = { text = "MIT" }
 authors = [
     { name = "Philip Korsager Nickel", email = "s214960@dtu.dk" }
@@ -38,6 +38,9 @@ dependencies = [
   "meshio>=5.3.5",
   "pyyaml>=6.0.3",
   "pyvista>=0.46.4",
+  "h5py>=3.15.1",
+  "mpi4py>=4.1.1",
+  "petsc>=3.24.1",
 ]
 
 [tool.setuptools]

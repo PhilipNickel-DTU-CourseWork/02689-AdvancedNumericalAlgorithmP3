@@ -4,14 +4,17 @@ This module defines the configuration and result data structures
 for lid-driven cavity solvers (both FV and spectral).
 """
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import numpy as np
 
 
 @dataclass
-class SolverConfig:
-    """Physical problem configuration for lid-driven cavity.
+class Config:
+    """Base configuration with shared physics parameters.
+
+    All solver configs inherit from this to ensure consistent
+    problem definition across different numerical methods.
 
     Parameters
     ----------
@@ -32,33 +35,17 @@ class SolverConfig:
 
 
 @dataclass
-class RuntimeConfig:
-    """Runtime configuration for iterative solvers.
+class FVConfig(Config):
+    """Finite volume solver configuration.
+
+    Inherits physics parameters (Re, Lx, Ly, lid_velocity) from Config.
 
     Parameters
     ----------
-    tolerance : float
-        Convergence tolerance for residual norm.
-    max_iter : int
-        Maximum number of iterations/pseudo-timesteps.
-    N : Optional[int]
-        Grid resolution parameter. For FV: cells per direction.
-        For spectral: polynomial order or number of modes.
-    """
-
-    tolerance: float = 1e-6
-    max_iter: int = 1000
-    N: Optional[int] = None  # Solver-specific grid/order parameter
-
-
-@dataclass
-class FVConfig:
-    """Finite volume solver-specific configuration.
-
-    Parameters
-    ----------
-    mesh_path : str
-        Path to mesh file (.msh format).
+    nx : int
+        Number of cells in x-direction.
+    ny : int
+        Number of cells in y-direction.
     convection_scheme : str
         Convection discretization ('upwind', 'TVD', 'central').
     limiter : str
@@ -69,7 +56,8 @@ class FVConfig:
         Under-relaxation factor for pressure correction.
     """
 
-    mesh_path: str = "data/meshes/structured/fine.msh"
+    nx: int = 32
+    ny: int = 32
     convection_scheme: str = "TVD"
     limiter: str = "MUSCL"
     alpha_uv: float = 0.7
@@ -77,62 +65,70 @@ class FVConfig:
 
 
 @dataclass
-class SolutionFields:
-    """Container for spatial solution fields.
+class SpectralConfig(Config):
+    """Pseudo-spectral solver configuration.
+
+    Inherits physics parameters (Re, Lx, Ly, lid_velocity) from Config.
 
     Parameters
     ----------
-    u : np.ndarray
-        x-component of velocity field.
-    v : np.ndarray
-        y-component of velocity field.
-    p : np.ndarray
-        Pressure field.
+    Nx : int
+        Number of grid points in x-direction.
+    Ny : int
+        Number of grid points in y-direction.
+    differentiation_method : str
+        Method for spatial derivatives ('fft', 'chebyshev', 'matrix').
+    time_scheme : str
+        Time integration scheme ('rk4', 'ab2', 'euler').
+    dt : float
+        Time step size.
+    dealiasing : bool
+        Use 3/2 rule for dealiasing (for FFT-based methods).
+    multigrid : bool
+        Use multigrid acceleration.
+    mg_levels : int
+        Number of multigrid levels (if multigrid=True).
     """
 
-    u: np.ndarray
-    v: np.ndarray
-    p: np.ndarray
-
-
-@dataclass
-class ConvergenceResults:
-    """Container for convergence metadata.
-
-    Parameters
-    ----------
-    iterations : int
-        Total number of iterations performed.
-    converged : bool
-        Whether the solver converged within tolerance.
-    final_alg_residual : float
-        Final residual value.
-    wall_time : float
-        Total wall-clock time in seconds.
-    """
-
-    iterations: int = 0
-    converged: bool = False
-    final_alg_residual: float = float('inf')
-    wall_time: float = 0.0
+    Nx: int = 64
+    Ny: int = 64
+    differentiation_method: str = "fft"  # 'fft', 'chebyshev', 'matrix'
+    time_scheme: str = "rk4"
+    dt: float = 0.001
+    dealiasing: bool = True
+    multigrid: bool = False
+    mg_levels: int = 3
 
 
 @dataclass
 class Results:
-    """Container for all solver results.
+    """Container for all solver results grouped by dimensionality.
+
+    This structure organizes data by dimensionality for clean HDF5 storage
+    and pandas integration:
+    - fields: spatial data (n_cells dimension)
+    - time_series: temporal data (n_iterations dimension)
+    - metadata: scalar configuration and convergence info
 
     Parameters
     ----------
-    convergence : ConvergenceResults
-        Convergence metadata.
-    fields : SolutionFields
-        Spatial solution fields (u, v, p).
-    res_his : List[float]
-        Residual history over iterations.
+    fields : Dict[str, np.ndarray]
+        Spatial solution fields (u, v, p) with shape (n_cells,).
+    time_series : Dict[str, List]
+        Time-series data (residuals, etc.) as lists (length = n_iterations).
+        Lists are more natural since length is unknown during solving.
+    metadata : Dict[str, Any]
+        Scalar metadata including solver config and convergence info.
+
+    Examples
+    --------
+    >>> results = Results(
+    ...     fields={'u': u_array, 'v': v_array, 'p': p_array},
+    ...     time_series={'residual': [0.1, 0.05, 0.01, ...]},
+    ...     metadata={'Re': 100.0, 'iterations': 250, 'converged': True}
+    ... )
     """
 
-    convergence: ConvergenceResults
-    fields: SolutionFields
-    res_his: List[float] = field(default_factory=list)
-
-
+    fields: Dict[str, np.ndarray]
+    time_series: Dict[str, List]
+    metadata: Dict[str, Any]

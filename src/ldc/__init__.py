@@ -1,23 +1,34 @@
 """Lid-driven cavity solver framework.
 
-This module provides the abstract base class and data structures
-for implementing lid-driven cavity solvers.
+This module provides solvers for comparing finite volume and spectral methods.
+
+Solver Hierarchy:
+-----------------
+LidDrivenCavitySolver (abstract base - defines problem)
+├── FVSolver (finite volume with SIMPLE algorithm)
+└── SpectralSolver (spectral methods with basic implementation)
+    └── MultigridSpectralSolver (extends with multigrid acceleration)
 """
 
 from .base_solver import LidDrivenCavitySolver
 from .datastructures import (
-    SolverConfig,
-    RuntimeConfig,
+    Config,
     FVConfig,
+    SpectralConfig,
     Results,
 )
 from .fv_solver import FVSolver
+from .spectral_solver import SpectralSolver
 
 __all__ = [
+    # Base classes
     "LidDrivenCavitySolver",
-    "SolverConfig",
-    "RuntimeConfig",
+    # Configurations
+    "Config",
     "FVConfig",
+    "SpectralConfig",
     "Results",
+    # Concrete solvers
     "FVSolver",
+    "SpectralSolver",
 ]

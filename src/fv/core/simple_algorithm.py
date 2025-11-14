@@ -81,10 +81,10 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
     # Pressure field
     p = np.ascontiguousarray(np.zeros(n_cells))
 
-    # Residuals
-    u_l2norm = np.zeros(max_iter)
-    v_l2norm = np.zeros(max_iter)
-    continuity_l2norm = np.zeros(max_iter)
+    # Residuals (build as lists instead of pre-allocated arrays)
+    u_l2norm = []
+    v_l2norm = []
+    continuity_l2norm = []
     max_u_l2norm = 0.0
     max_v_l2norm = 0.0
     max_mass_imbalance = 0.0
@@ -187,7 +187,8 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             u_residual_field = A_u @ U_star[:,0] - rhs_u_unrelaxed
 
             # compute normalized residual
-            u_l2norm[i], max_u_l2norm = compute_residual(A_u.data, A_u.indices, A_u.indptr, U_star[:,0], rhs_u_unrelaxed, max_u_l2norm, internal_cells)
+            u_res, max_u_l2norm = compute_residual(A_u.data, A_u.indices, A_u.indptr, U_star[:,0], rhs_u_unrelaxed, max_u_l2norm, internal_cells)
+            u_l2norm.append(u_res)
 
             #=============================================================================
             # ASSEMBLE and solve V-MOMENTUM EQUATIONS
@@ -217,7 +218,8 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             v_residual_field = A_v @ U_star[:,1] - rhs_v_unrelaxed
 
             # compute normalized residual
-            v_l2norm[i], max_v_l2norm = compute_residual(A_v.data, A_v.indices, A_v.indptr, U_star[:,1], rhs_v_unrelaxed, max_v_l2norm, internal_cells)
+            v_res, max_v_l2norm = compute_residual(A_v.data, A_v.indices, A_v.indptr, U_star[:,1], rhs_v_unrelaxed, max_v_l2norm, internal_cells)
+            v_l2norm.append(v_res)
 
             #=============================================================================
             # RHIE-CHOW, MASS FLUX, and PRESSURE CORRECTION
@@ -236,7 +238,8 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             # Store continuity residual field
             continuity_field = rhs_p.copy()
 
-            continuity_l2norm[i], max_mass_imbalance = compute_residual(A_p.data, A_p.indices, A_p.indptr, np.zeros_like(p), rhs_p, max_mass_imbalance, internal_cells)
+            cont_res, max_mass_imbalance = compute_residual(A_p.data, A_p.indices, A_p.indptr, np.zeros_like(p), rhs_p, max_mass_imbalance, internal_cells)
+            continuity_l2norm.append(cont_res)
 
             p_prime, _, ksp_1 = scipy_solver(A_p, rhs_p, remove_nullspace=True, **linear_solver_settings['pressure'])
 
@@ -263,9 +266,9 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
             U_old_faces = U_faces_corrected
 
             if progress_callback:
-                progress_callback.update(i, u_l2norm[i], v_l2norm[i], continuity_l2norm[i])
+                progress_callback.update(i, u_res, v_res, cont_res)
 
-            is_converged = u_l2norm[i] < tol and v_l2norm[i] < tol #and continuity_l2norm[i] < tol)
+            is_converged = u_res < tol and v_res < tol #and cont_res < tol)
             if is_converged:
                 if not transient: # Only print for steady-state to avoid verbose output
                     print(f"Converged at iteration {i}")
@@ -275,7 +278,7 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
         # if the solution for the current time step did not converge.
         if transient and not is_converged and not interrupted:
             print(f"  > Warning: Time step {time_step + 1} did not converge within {max_iter} iterations. "
-                  f"Final residuals: u={u_l2norm[i]:.2e}, v={v_l2norm[i]:.2e}, cont={continuity_l2norm[i]:.2e}")
+                  f"Final residuals: u={u_l2norm[-1]:.2e}, v={v_l2norm[-1]:.2e}, cont={continuity_l2norm[-1]:.2e}")
 
         # For a steady-state simulation, convergence means we can exit the main loop.
         if is_converged and not transient:
@@ -305,9 +308,26 @@ def simple_algorithm(mesh, alpha_uv, alpha_p, rho, mu, max_iter, tol, convection
         np.save(os.path.join(results_dir, "p_final.npy"), p)
         np.save(os.path.join(results_dir, "U_final.npy"), U)
 
-    # Trim residual history
-    u_l2norm = u_l2norm[:final_iter_count]
-    v_l2norm = v_l2norm[:final_iter_count]
-    continuity_l2norm = continuity_l2norm[:final_iter_count]
+    # Compute combined residual
+    combined_residual = [max(u, v, c) for u, v, c in zip(u_l2norm, v_l2norm, continuity_l2norm)]
 
-    return p, U, mdot, (u_l2norm, v_l2norm, continuity_l2norm), final_iter_count, is_converged, u_residual_field, v_residual_field, continuity_field 
+    # Return u and v separately, residuals as dict of lists
+    return {
+        'fields': {
+            'u': U[:, 0],
+            'v': U[:, 1],
+            'p': p,
+        },
+        'time_series': {
+            'residual': combined_residual,
+            'u_residual': u_l2norm,
+            'v_residual': v_l2norm,
+            'continuity_residual': continuity_l2norm,
+        },
+        'metadata': {
+            'iterations': final_iter_count,
+            'converged': is_converged,
+            'final_residual': combined_residual[-1] if combined_residual else float('inf'),
+        },
+        'mdot': mdot,  # Keep at top level for FVSolver to store
+    }
