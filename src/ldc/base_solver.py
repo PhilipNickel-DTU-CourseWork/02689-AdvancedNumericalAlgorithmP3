@@ -26,14 +26,26 @@ class LidDrivenCavitySolver(ABC):
         Configuration with physics (Re, Lx, Ly, lid_velocity) and numerics (nx, ny, etc).
     """
 
-    def __init__(self, config: Config):
+    # Subclasses should override this with their config class
+    Config = None
+
+    def __init__(self, config: Config = None, **kwargs):
         """Initialize solver with configuration.
 
         Parameters
         ----------
-        config : Config
+        config : Config, optional
             Configuration object (FVConfig, SpectralConfig, etc).
+            If not provided, kwargs are used to create config.
+        **kwargs
+            Configuration parameters passed to Config class if config is None.
         """
+        # Create config from kwargs if not provided
+        if config is None:
+            if self.Config is None:
+                raise ValueError("Subclass must define Config class attribute")
+            config = self.Config(**kwargs)
+
         self.config = config
 
         # Compute fluid properties from Reynolds number

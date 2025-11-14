@@ -26,24 +26,19 @@ class FVSolver(LidDrivenCavitySolver):
         FV-specific parameters (nx, ny, convection scheme, etc.).
     """
 
-    def __init__(self, config: FVConfig):
+    # Make config class accessible via solver
+    Config = FVConfig
+
+    def __init__(self, **kwargs):
         """Initialize FV solver.
 
         Parameters
         ----------
-        config : FVConfig
-            Finite volume configuration with physics and numerics.
+        **kwargs
+            Configuration parameters passed to FVConfig.
+            Can also pass config=FVConfig(...) directly.
         """
-        # Initialize base solver (creates grid and mesh)
-        super().__init__(config)
-
-        # Initialize FV-specific mass flux field
-        n_faces = self.mesh.face_areas.shape[0]
-        self.mdot = np.zeros(n_faces)
-
-    def _setup_solver_specifics(self):
-        """FV solver has no additional setup beyond __init__."""
-        pass
+        super().__init__(**kwargs)
 
     def solve(self, tolerance: float = 1e-6, max_iter: int = 1000) -> Results:
         """Run the SIMPLE algorithm until convergence.

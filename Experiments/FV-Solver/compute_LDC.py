@@ -2,7 +2,7 @@
 """Compute lid-driven cavity solution using FV solver."""
 
 # %% Imports
-from ldc import FVSolver, FVConfig
+from ldc import FVSolver
 from utils import get_project_root
 
 # %% Setup paths
@@ -11,9 +11,7 @@ data_dir = project_root / "data" / "FV-Solver"
 data_dir.mkdir(parents=True, exist_ok=True)
 
 # %% Configure and solve
-config = FVConfig(Re=100.0)  # Single config with physics + numerics
-
-solver = FVSolver(config)
+solver = FVSolver(Re=100.0)  # Direct parameter passing
 results = solver.solve(tolerance=1e-5, max_iter=300)
 
 

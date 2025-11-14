@@ -13,6 +13,8 @@ from .datastructures import SpectralConfig, Results
 
 
 class SpectralSolver(LidDrivenCavitySolver):
+    # Make config class accessible via solver
+    Config = SpectralConfig
     """Spectral solver for lid-driven cavity problem.
 
     Provides common infrastructure:
@@ -33,19 +35,20 @@ class SpectralSolver(LidDrivenCavitySolver):
         Spectral solver configuration (physics + numerics).
     """
 
-    def __init__(self, config):
+    def __init__(self, **kwargs):
         """Initialize pseudo-spectral solver.
 
         Parameters
         ----------
-        config : SpectralConfig
-            Spectral solver configuration (physics + numerics).
+        **kwargs
+            Configuration parameters passed to SpectralConfig.
+            Can also pass config=SpectralConfig(...) directly.
         """
-        # Store spectral-specific parameters
-        self.dt = config.dt
+        # Base class handles config creation from kwargs
+        super().__init__(**kwargs)
 
-        # Initialize base solver (creates grid using _get_grid_size)
-        super().__init__(config)
+        # Store spectral-specific parameters
+        self.dt = self.config.dt
 
         # Store grid dimensions from base class for convenience
         self.Nx = self.nx
