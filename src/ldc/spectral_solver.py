@@ -9,12 +9,12 @@ import numpy as np
 import time
 
 from .base_solver import LidDrivenCavitySolver
-from .datastructures import SpectralConfig
+from .datastructures import SpectralInfo
 
 
 class SpectralSolver(LidDrivenCavitySolver):
     # Make config class accessible via solver
-    Config = SpectralConfig
+    Config = SpectralInfo
     """Spectral solver for lid-driven cavity problem.
 
     Provides common infrastructure:

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Tuple
 
 from .base_solver import LidDrivenCavitySolver
-from .datastructures import FVConfig
+from .datastructures import FVinfo
 
 
 class FVSolver(LidDrivenCavitySolver):
@@ -27,7 +27,7 @@ class FVSolver(LidDrivenCavitySolver):
     """
 
     # Make config class accessible via solver
-    Config = FVConfig
+    Config = FVinfo
 
     def __init__(self, **kwargs):
         """Initialize FV solver.

@@ -222,7 +222,7 @@ def simple_algorithm(mesh, config, rho, mu, max_iter, tol):
     combined_residual = [max(u, v, c) for u, v, c in zip(u_l2norm, v_l2norm, continuity_l2norm)]
 
     # Return FV-specific dataclass instances
-    from ldc.datastructures import FVFields, TimeSeries, FVMetadata
+    from ldc.datastructures import FVFields, TimeSeries, FVinfo
 
     fields = FVFields(
         u=U[:, 0],
@@ -241,7 +241,7 @@ def simple_algorithm(mesh, config, rho, mu, max_iter, tol):
         continuity_residual=continuity_l2norm,
     )
 
-    metadata = FVMetadata(
+    metadata = FVinfo(
         # Physics parameters from config
         Re=config.Re,
         lid_velocity=config.lid_velocity,

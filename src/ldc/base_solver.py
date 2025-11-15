@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 import numpy as np
 
-from .datastructures import Config
+from .datastructures import Info
 
 
 class LidDrivenCavitySolver(ABC):
@@ -179,7 +179,14 @@ class LidDrivenCavitySolver(ABC):
         with h5py.File(filepath, 'w') as f:
             # Save metadata as root-level attributes
             for key, val in metadata_dict.items():
-                f.attrs[key] = val
+                # Skip None values and convert to appropriate types
+                if val is None:
+                    continue
+                # Convert strings to bytes for HDF5 compatibility
+                if isinstance(val, str):
+                    f.attrs[key] = val
+                else:
+                    f.attrs[key] = val
 
             # Save fields in a fields group
             fields_grp = f.create_group('fields')
