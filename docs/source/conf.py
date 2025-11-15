@@ -13,8 +13,8 @@ sys.path.insert(0, repo_root)
 # -- Project information -----------------------------------------------------
 
 project = "Advanced Numerical Algorithms - Project 3"
-copyright = "2025, Philip Korsager Nickel"
-author = "Philip Korsager Nickel"
+copyright = "2025, Philip Korsager Nickel, Aske Schrøder Nielsen"
+author = "Philip Korsager Nickel, Aske Schrøder Nielsen"
 
 # -- General configuration ---------------------------------------------------
 
