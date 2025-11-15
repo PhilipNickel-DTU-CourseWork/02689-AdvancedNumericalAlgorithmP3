@@ -138,19 +138,18 @@ class GhiaValidator:
         })
         sim_df = pd.concat([u_sim_df, v_sim_df], ignore_index=True)
 
-        # Create faceted plot with simulation data
+        # Create faceted plot with simulation data (scatter only, no lines)
         g = sns.relplot(
             data=sim_df,
             x='position',
             y='coordinate',
             col='component',
-            kind='line',
+            kind='scatter',
             marker='o',
             height=5,
             aspect=0.8,
             facet_kws={'sharey': False, 'sharex': False},
-            linewidth=1.5,
-            markersize=4,
+            s=16,
             label='Simulation'
         )
 
