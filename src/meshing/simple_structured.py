@@ -1,11 +1,10 @@
 """Simplified structured quad mesh builder for FV solver.
 
 This is a minimal implementation specifically for structured quad meshes,
-avoiding the complexity of the general-purpose mesh_loader.
+using pure numpy arrays without external mesh generation libraries.
 """
 
 import numpy as np
-import gmsh
 from numba import njit
 from .mesh_data import MeshData2D
 
@@ -156,128 +155,116 @@ def _compute_geometric_factors(n_faces, owner_cells, neighbor_cells,
 
 def create_structured_mesh_2d(nx: int, ny: int, Lx: float = 1.0, Ly: float = 1.0,
                                 lid_velocity: float = 1.0) -> MeshData2D:
-    """Create structured quad mesh using gmsh, simplified for structured grids only.
+    """Create structured Cartesian quad mesh using pure numpy.
 
-    This is a minimal implementation that:
-    - Uses gmsh to generate geometry and quad mesh
-    - Builds FV connectivity with simple, focused algorithms
+    This implementation:
+    - Uses numpy meshgrid to generate a uniform Cartesian grid
+    - Builds FV connectivity for structured quad cells
     - Hard-codes lid-driven cavity boundary conditions
-    - Skips non-orthogonality corrections (assumes structured orthogonal grid)
+    - Assumes orthogonal grid (no non-orthogonality corrections needed)
+
+    Parameters
+    ----------
+    nx, ny : int
+        Number of cells in x and y directions
+    Lx, Ly : float
+        Domain size in x and y directions
+    lid_velocity : float
+        Velocity of the top lid
+
+    Returns
+    -------
+    MeshData2D
+        Mesh data structure ready for FV solver
     """
-    # 1. Generate mesh with gmsh
-    if not gmsh.isInitialized():
-        gmsh.initialize()
+    # 1. Generate uniform Cartesian grid vertices
+    # Create (nx+1) x (ny+1) vertices
+    x = np.linspace(0, Lx, nx + 1)
+    y = np.linspace(0, Ly, ny + 1)
+    X, Y = np.meshgrid(x, y, indexing='ij')
 
-    gmsh.clear()
-    gmsh.model.add("cavity")
-    gmsh.option.setNumber("General.Terminal", 0)  # Suppress gmsh output
+    # Flatten to get vertex coordinates
+    points = np.column_stack([X.ravel(), Y.ravel()])
+    n_vertices = len(points)
 
-    # Geometry
-    lc = Lx / max(nx, ny)
-    p = [gmsh.model.geo.addPoint(x, y, 0.0, lc)
-         for x, y in [(0, 0), (Lx, 0), (Lx, Ly), (0, Ly)]]
+    # 2. Build quad cells
+    # Each cell is defined by 4 vertices in counter-clockwise order:
+    # v3---v2
+    # |    |
+    # v0---v1
+    cells = []
+    for i in range(nx):
+        for j in range(ny):
+            # Vertex indices for cell (i,j)
+            v0 = i * (ny + 1) + j
+            v1 = (i + 1) * (ny + 1) + j
+            v2 = (i + 1) * (ny + 1) + (j + 1)
+            v3 = i * (ny + 1) + (j + 1)
+            cells.append([v0, v1, v2, v3])
 
-    lines = [gmsh.model.geo.addLine(p[i], p[(i + 1) % 4]) for i in range(4)]
-    loop = gmsh.model.geo.addCurveLoop(lines)
-    surf = gmsh.model.geo.addPlaneSurface([loop])
-
-    # Structured mesh
-    for line, n in zip([lines[0], lines[2], lines[1], lines[3]],
-                        [nx + 1, nx + 1, ny + 1, ny + 1]):
-        gmsh.model.geo.mesh.setTransfiniteCurve(line, n)
-    gmsh.model.geo.mesh.setTransfiniteSurface(surf)
-    gmsh.model.geo.mesh.setRecombine(2, surf)
-
-    # Physical groups
-    for i, name in enumerate(["bottom", "right", "top", "left"]):
-        gmsh.model.addPhysicalGroup(1, [lines[i]], i + 1)
-        gmsh.model.setPhysicalName(1, i + 1, name)
-    gmsh.model.addPhysicalGroup(2, [surf], 10)
-    gmsh.model.setPhysicalName(2, 10, "fluid")
-
-    gmsh.model.geo.synchronize()
-    gmsh.model.mesh.generate(2)
-
-    # 2. Extract mesh data
-    node_tags, coords, _ = gmsh.model.mesh.getNodes()
-    points = coords.reshape(-1, 3)[:, :2]
-    node_map = {int(tag): i for i, tag in enumerate(node_tags)}
-
-    # Get quad cells
-    _, _, elem_nodes = gmsh.model.mesh.getElements(2)
-    cells = np.array([[node_map[int(n)] for n in elem_nodes[0][i:i+4]]
-                      for i in range(0, len(elem_nodes[0]), 4)], dtype=np.int64)
-
-    # Get boundary edges
-    boundary_lines_dict = {}
-    for dim, tag in gmsh.model.getPhysicalGroups(1):
-        name = gmsh.model.getPhysicalName(dim, tag)
-        entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
-
-        for entity in entities:
-            _, _, edge_nodes = gmsh.model.mesh.getElements(dim, entity)
-            if len(edge_nodes) > 0:
-                edges = edge_nodes[0].reshape(-1, 2)
-                for edge in edges:
-                    e = tuple(sorted([node_map[int(edge[0])], node_map[int(edge[1])]]))
-                    boundary_lines_dict[e] = (tag, name)
-
-    gmsh.finalize()
-
-    # 3. Build FV connectivity
+    cells = np.array(cells, dtype=np.int64)
     n_cells = len(cells)
+
+    # 3. Compute cell geometry
+    # For uniform Cartesian grid: all cells have same area
+    dx = Lx / nx
+    dy = Ly / ny
+    cell_area = dx * dy
+    cell_volumes = np.full(n_cells, cell_area)
+
+    # Cell centers are at the geometric center of each quad
     cell_centers = np.mean(points[cells], axis=1)
-    cell_volumes = np.zeros(n_cells)
 
-    # Cell volumes (quad area = |cross product of diagonals| / 2)
-    for i, cell in enumerate(cells):
-        p0, p1, p2, p3 = points[cell]
-        # Shoelace formula for quad area
-        area = 0.5 * abs((p0[0] - p2[0]) * (p1[1] - p3[1]) -
-                         (p1[0] - p3[0]) * (p0[1] - p2[1]))
-        cell_volumes[i] = area
-
-    # Build face connectivity
+    # 4. Build face connectivity
     face_vertices, owner_cells, neighbor_cells = _build_face_connectivity(cells)
     n_faces = len(face_vertices)
 
-    # Face geometry
+    # 5. Face geometry
     face_centers, face_areas, vector_S_f = _compute_face_geometry(
         points, face_vertices, owner_cells, neighbor_cells, cell_centers
     )
 
-    # Geometric factors
+    # 6. Geometric factors
     vector_d_CE, unit_vector_n, unit_vector_e, face_interp_factors, d_Cb = \
         _compute_geometric_factors(n_faces, owner_cells, neighbor_cells,
                                      cell_centers, face_centers, vector_S_f, face_areas)
 
-    # 4. Boundary conditions
+    # 7. Boundary conditions (lid-driven cavity specific)
     internal_faces = np.where(neighbor_cells >= 0)[0].astype(np.int64)
     boundary_faces_list = []
     boundary_types = np.full((n_faces, 2), -1, dtype=np.int64)
     boundary_values = np.zeros((n_faces, 3), dtype=np.float64)
 
-    # Map boundary edges to faces
+    # Identify boundary faces by checking face centers against domain boundaries
+    eps = 1e-10
     for f in range(n_faces):
         if neighbor_cells[f] >= 0:
             continue  # Internal face
 
-        edge = tuple(sorted(face_vertices[f]))
-        if edge in boundary_lines_dict:
-            patch_tag, patch_name = boundary_lines_dict[edge]
-            boundary_faces_list.append(f)
+        boundary_faces_list.append(f)
+        fc = face_centers[f]
 
-            # Lid-driven cavity BCs
-            if patch_name == "top":
-                boundary_types[f] = [0, 3]  # wall velocity, zeroGradient pressure
-                boundary_values[f] = [lid_velocity, 0.0, 0.0]
-            else:
-                boundary_types[f] = [0, 3]  # wall velocity, zeroGradient pressure
-                boundary_values[f] = [0.0, 0.0, 0.0]
+        # Determine which boundary this face belongs to
+        if abs(fc[1] - Ly) < eps:
+            # Top boundary (moving lid)
+            boundary_types[f] = [0, 3]  # wall velocity, zeroGradient pressure
+            boundary_values[f] = [lid_velocity, 0.0, 0.0]
+        elif abs(fc[1] - 0.0) < eps:
+            # Bottom boundary (stationary wall)
+            boundary_types[f] = [0, 3]
+            boundary_values[f] = [0.0, 0.0, 0.0]
+        elif abs(fc[0] - 0.0) < eps:
+            # Left boundary (stationary wall)
+            boundary_types[f] = [0, 3]
+            boundary_values[f] = [0.0, 0.0, 0.0]
+        elif abs(fc[0] - Lx) < eps:
+            # Right boundary (stationary wall)
+            boundary_types[f] = [0, 3]
+            boundary_values[f] = [0.0, 0.0, 0.0]
 
     boundary_faces = np.array(boundary_faces_list, dtype=np.int64)
 
-    # 5. Simplified structured mesh: skip non-orthogonality terms
+    # 8. Simplified structured mesh: skip non-orthogonality terms
     vector_E_f = vector_S_f.copy()  # E_f = S_f for orthogonal mesh
     vector_T_f = np.zeros_like(vector_S_f)  # T_f = 0 for orthogonal mesh
     vector_skewness = np.zeros_like(face_centers)  # No skewness
