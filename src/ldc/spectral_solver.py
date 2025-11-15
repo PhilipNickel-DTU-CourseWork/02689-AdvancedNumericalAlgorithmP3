@@ -9,7 +9,7 @@ import numpy as np
 import time
 
 from .base_solver import LidDrivenCavitySolver
-from .datastructures import SpectralConfig, Results
+from .datastructures import SpectralConfig
 
 
 class SpectralSolver(LidDrivenCavitySolver):

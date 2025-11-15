@@ -48,16 +48,15 @@ def is_diagonally_dominant(A):
     dominance = np.all(diagonal >= off_diagonal_sum)
     return dominance
 
-def simple_algorithm(mesh, config, rho, mu, max_iter, tol, progress_callback=None, interruption_flag=lambda: False, linear_solver_settings=None, transient=False, dt=0.0, end_time=0.0, time_scheme="Euler", results_dir=None, save_interval=0):
+def simple_algorithm(mesh, config, rho, mu, max_iter, tol):
     # Convert tolerance from string to float if needed
     tol = float(tol)
 
-    # Default linear solver settings if not provided
-    if linear_solver_settings is None:
-        linear_solver_settings = {
-            'momentum': {'type': 'bcgs', 'preconditioner': 'hypre', 'tolerance': 1e-6, 'max_iterations': 1000},
-            'pressure': {'type': 'bcgs', 'preconditioner': 'hypre', 'tolerance': 1e-6, 'max_iterations': 1000}
-        }
+    # Linear solver settings
+    linear_solver_settings = {
+        'momentum': {'type': 'bcgs', 'preconditioner': 'hypre', 'tolerance': 1e-6, 'max_iterations': 1000},
+        'pressure': {'type': 'bcgs', 'preconditioner': 'hypre', 'tolerance': 1e-6, 'max_iterations': 1000}
+    }
 
     time_start = time.time()
 
@@ -95,218 +94,129 @@ def simple_algorithm(mesh, config, rho, mu, max_iter, tol, progress_callback=Non
     continuity_field = np.zeros(n_cells)
     
     internal_cells = get_unique_cells_from_faces(mesh, mesh.internal_faces)
-    
-    num_time_steps = int(end_time / dt) if transient and dt > 0 else 1
-    if transient:
-        print(f"Running transient simulation for {num_time_steps} time steps with dt={dt}")
 
     final_iter_count = 0
     is_converged = False
-    interrupted = False
 
-    for time_step in range(num_time_steps):
-        if interrupted:
+    for i in range(max_iter):
+        final_iter_count = i + 1
+
+        #=============================================================================
+        # PRECOMPUTE QUANTITIES
+        #=============================================================================
+        grad_p = compute_cell_gradients(mesh, p, weighted=True, weight_exponent=0.5, use_limiter=False)
+        grad_p_bar = interpolate_to_face(mesh, grad_p)
+        U_old_bar = interpolate_to_face(mesh, U)
+        grad_u = compute_cell_gradients(mesh, U[:,0], weighted=True, weight_exponent=0.5, use_limiter=True)
+        grad_v = compute_cell_gradients(mesh, U[:,1], weighted=True, weight_exponent=0.5, use_limiter=True)
+
+        #=============================================================================
+        # ASSEMBLE and solve U-MOMENTUM EQUATIONS
+        #=============================================================================
+        row, col, data, b_u = assemble_diffusion_convection_matrix(
+            mesh, mdot, grad_u, U_prev_iter, rho, mu, 0, phi=U[:,0],
+            scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p,
+            grad_pressure_field=grad_p
+        )
+        A_u = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
+        A_u_diag = A_u.diagonal()
+        rhs_u = b_u - grad_p[:, 0] * mesh.cell_volumes
+        rhs_u_unrelaxed = rhs_u.copy()
+
+        # Relax
+        relaxed_A_u_diag, rhs_u = relax_momentum_equation(rhs_u, A_u_diag, U_prev_iter[:,0], config.alpha_uv)
+        A_u.setdiag(relaxed_A_u_diag)
+
+        # solve
+        U_star[:,0], _, _= scipy_solver(A_u, rhs_u, **linear_solver_settings['momentum'])
+        A_u.setdiag(A_u_diag) # Restore original diagonal
+
+        # Store residual field for u-momentum
+        u_residual_field = A_u @ U_star[:,0] - rhs_u_unrelaxed
+
+        # compute normalized residual
+        u_res, max_u_l2norm = compute_residual(A_u.data, A_u.indices, A_u.indptr, U_star[:,0], rhs_u_unrelaxed, max_u_l2norm, internal_cells)
+        u_l2norm.append(u_res)
+
+        #=============================================================================
+        # ASSEMBLE and solve V-MOMENTUM EQUATIONS
+        #=============================================================================
+        row, col, data, b_v = assemble_diffusion_convection_matrix(
+            mesh, mdot, grad_v, U_prev_iter, rho, mu, 1, phi=U[:,1],
+            scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p,
+            grad_pressure_field=grad_p
+        )
+        A_v = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
+        A_v_diag = A_v.diagonal()
+        rhs_v = b_v - grad_p[:, 1] * mesh.cell_volumes
+        rhs_v_unrelaxed = rhs_v.copy()
+
+        # Relax
+        relaxed_A_v_diag, rhs_v = relax_momentum_equation(rhs_v, A_v_diag, U_prev_iter[:,1], config.alpha_uv)
+        A_v.setdiag(relaxed_A_v_diag)
+
+        # solve
+        U_star[:,1], _, _= scipy_solver(A_v, rhs_v, **linear_solver_settings['momentum'])
+        A_v.setdiag(A_v_diag) # Restore original diagonal
+
+        # Store residual field for v-momentum
+        v_residual_field = A_v @ U_star[:,1] - rhs_v_unrelaxed
+
+        # compute normalized residual
+        v_res, max_v_l2norm = compute_residual(A_v.data, A_v.indices, A_v.indptr, U_star[:,1], rhs_v_unrelaxed, max_v_l2norm, internal_cells)
+        v_l2norm.append(v_res)
+
+        #=============================================================================
+        # RHIE-CHOW, MASS FLUX, and PRESSURE CORRECTION
+        #=============================================================================
+        bold_D = bold_Dv_calculation(mesh, A_u_diag, A_v_diag)
+        bold_D_bar = interpolate_to_face(mesh, bold_D)
+        U_star_bar = interpolate_to_face(mesh, U_star)
+        U_star_rc = rhie_chow_velocity(mesh, U_star, U_star_bar, U_old_bar, U_old_faces, grad_p_bar, grad_p, p, config.alpha_uv, bold_D_bar)
+
+        mdot_star = mdot_calculation(mesh, rho, U_star_rc)
+
+        row, col, data = assemble_pressure_correction_matrix(mesh, rho)
+        A_p = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
+        rhs_p = -compute_divergence_from_face_fluxes(mesh, mdot_star)
+
+        # Store continuity residual field
+        continuity_field = rhs_p.copy()
+
+        cont_res, max_mass_imbalance = compute_residual(A_p.data, A_p.indices, A_p.indptr, np.zeros_like(p), rhs_p, max_mass_imbalance, internal_cells)
+        continuity_l2norm.append(cont_res)
+
+        p_prime, _, ksp_1 = scipy_solver(A_p, rhs_p, remove_nullspace=True, **linear_solver_settings['pressure'])
+
+        #=============================================================================
+        # CORRECTIONS (SIMPLE)
+        #=============================================================================
+        grad_p_prime = compute_cell_gradients(mesh, p_prime, weighted=True, weight_exponent=0.5, use_limiter=False)
+        U_prime = velocity_correction(mesh, grad_p_prime, bold_D)
+        U_corrected = U_star + U_prime
+
+        U_prime_face = interpolate_to_face(mesh, U_prime)
+        U_faces_corrected = U_star_rc + U_prime_face
+
+        mdot_prime = mdot_calculation(mesh, rho, U_prime_face, correction=True)
+        mdot_corrected = mdot_star + mdot_prime
+
+        p_corrected = p + config.alpha_p * p_prime
+
+        # Update fields for next iteration
+        p = p_corrected
+        U = U_corrected
+        U_prev_iter = U_corrected.copy()
+        mdot = mdot_corrected
+        U_old_faces = U_faces_corrected
+
+        is_converged = u_res < tol and v_res < tol
+        if is_converged:
+            print(f"Converged at iteration {i}")
             break
-            
-        if transient:
-            print(f"Time step {time_step + 1}/{num_time_steps}, Time: {time_step * dt:.4f}s")
-            U_old_time = U.copy()
-
-        explicit_crank_nic_u = np.zeros(n_cells)
-        explicit_crank_nic_v = np.zeros(n_cells)
-
-        if transient and time_scheme == "CrankNicolson":
-            # Pre-calculate the explicit part of the Crank-Nicolson scheme
-            grad_p_old = compute_cell_gradients(mesh, p, weighted=True, weight_exponent=0.5, use_limiter=False)
-            grad_u_old = compute_cell_gradients(mesh, U_old_time[:,0], weighted=True, weight_exponent=0.5, use_limiter=True)
-            grad_v_old = compute_cell_gradients(mesh, U_old_time[:,1], weighted=True, weight_exponent=0.5, use_limiter=True)
-
-            # U-momentum spatial residual
-            row_u, col_u, data_u, b_u = assemble_diffusion_convection_matrix(
-                mesh, mdot, grad_u_old, U_old_time, rho, mu, 0, phi=U_old_time[:,0], 
-                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
-                grad_pressure_field=grad_p_old, transient=False
-            )
-            A_u_old = coo_matrix((data_u, (row_u, col_u)), shape=(n_cells, n_cells)).tocsr()
-            rhs_u_old_spatial = b_u - (-grad_p_old[:, 0] * mesh.cell_volumes)
-            residual_u_spatial = rhs_u_old_spatial - (A_u_old @ U_old_time[:, 0])
-            explicit_crank_nic_u = 0.5 * residual_u_spatial
-
-            # V-momentum spatial residual
-            row_v, col_v, data_v, b_v = assemble_diffusion_convection_matrix(
-                mesh, mdot, grad_v_old, U_old_time, rho, mu, 1, phi=U_old_time[:,1], 
-                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
-                grad_pressure_field=grad_p_old, transient=False
-            )
-            A_v_old = coo_matrix((data_v, (row_v, col_v)), shape=(n_cells, n_cells)).tocsr()
-            rhs_v_old_spatial = b_v - (-grad_p_old[:, 1] * mesh.cell_volumes)
-            residual_v_spatial = rhs_v_old_spatial - (A_v_old @ U_old_time[:, 1])
-            explicit_crank_nic_v = 0.5 * residual_v_spatial
-
-        for i in range(max_iter):
-            final_iter_count = i + 1
-            if interruption_flag():
-                print(f"Interrupted at iteration {i}. Exiting solver loop.")
-                interrupted = True
-                break
-
-            #=============================================================================
-            # PRECOMPUTE QUANTITIES
-            #=============================================================================
-            grad_p = compute_cell_gradients(mesh, p, weighted=True, weight_exponent=0.5, use_limiter=False)
-            grad_p_bar = interpolate_to_face(mesh, grad_p)
-            U_old_bar = interpolate_to_face(mesh, U)
-            grad_u = compute_cell_gradients(mesh, U[:,0], weighted=True, weight_exponent=0.5, use_limiter=True)
-            grad_v = compute_cell_gradients(mesh, U[:,1], weighted=True, weight_exponent=0.5, use_limiter=True)
-
-            #=============================================================================
-            # ASSEMBLE and solve U-MOMENTUM EQUATIONS
-            #=============================================================================
-            phi_arg_u = U_old_time[:,0] if transient else U[:,0]
-            row, col, data, b_u = assemble_diffusion_convection_matrix(
-                mesh, mdot, grad_u, U_prev_iter, rho, mu, 0, phi=phi_arg_u, 
-                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
-                grad_pressure_field=grad_p, dt=dt, transient=transient, time_scheme=time_scheme
-            )
-            A_u = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
-            A_u_diag = A_u.diagonal()
-            rhs_u = b_u - grad_p[:, 0] * mesh.cell_volumes
-            if transient and time_scheme == "CrankNicolson":
-                rhs_u += explicit_crank_nic_u
-            rhs_u_unrelaxed = rhs_u.copy()
-
-            # Relax
-            relaxed_A_u_diag, rhs_u = relax_momentum_equation(rhs_u, A_u_diag, U_prev_iter[:,0], config.alpha_uv)
-            A_u.setdiag(relaxed_A_u_diag)
-
-            # solve
-            U_star[:,0], _, _= scipy_solver(A_u, rhs_u, **linear_solver_settings['momentum'])
-            A_u.setdiag(A_u_diag) # Restore original diagonal
-
-            # Store residual field for u-momentum
-            u_residual_field = A_u @ U_star[:,0] - rhs_u_unrelaxed
-
-            # compute normalized residual
-            u_res, max_u_l2norm = compute_residual(A_u.data, A_u.indices, A_u.indptr, U_star[:,0], rhs_u_unrelaxed, max_u_l2norm, internal_cells)
-            u_l2norm.append(u_res)
-
-            #=============================================================================
-            # ASSEMBLE and solve V-MOMENTUM EQUATIONS
-            #=============================================================================
-            phi_arg_v = U_old_time[:,1] if transient else U[:,1]
-            row, col, data, b_v = assemble_diffusion_convection_matrix(
-                mesh, mdot, grad_v, U_prev_iter, rho, mu, 1, phi=phi_arg_v, 
-                scheme=config.convection_scheme, limiter=config.limiter, pressure_field=p, 
-                grad_pressure_field=grad_p, dt=dt, transient=transient, time_scheme=time_scheme
-            )
-            A_v = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
-            A_v_diag = A_v.diagonal()
-            rhs_v = b_v - grad_p[:, 1] * mesh.cell_volumes
-            if transient and time_scheme == "CrankNicolson":
-                rhs_v += explicit_crank_nic_v
-            rhs_v_unrelaxed = rhs_v.copy()
-
-            # Relax
-            relaxed_A_v_diag, rhs_v = relax_momentum_equation(rhs_v, A_v_diag, U_prev_iter[:,1], config.alpha_uv)
-            A_v.setdiag(relaxed_A_v_diag)
-
-            # solve
-            U_star[:,1], _, _= scipy_solver(A_v, rhs_v, **linear_solver_settings['momentum'])
-            A_v.setdiag(A_v_diag) # Restore original diagonal
-
-            # Store residual field for v-momentum
-            v_residual_field = A_v @ U_star[:,1] - rhs_v_unrelaxed
-
-            # compute normalized residual
-            v_res, max_v_l2norm = compute_residual(A_v.data, A_v.indices, A_v.indptr, U_star[:,1], rhs_v_unrelaxed, max_v_l2norm, internal_cells)
-            v_l2norm.append(v_res)
-
-            #=============================================================================
-            # RHIE-CHOW, MASS FLUX, and PRESSURE CORRECTION
-            #=============================================================================
-            bold_D = bold_Dv_calculation(mesh, A_u_diag, A_v_diag)
-            bold_D_bar = interpolate_to_face(mesh, bold_D)
-            U_star_bar = interpolate_to_face(mesh, U_star)
-            U_star_rc = rhie_chow_velocity(mesh, U_star, U_star_bar, U_old_bar, U_old_faces, grad_p_bar, grad_p, p, alpha_uv, bold_D_bar)
-            
-            mdot_star = mdot_calculation(mesh, rho, U_star_rc)
-            
-            row, col, data = assemble_pressure_correction_matrix(mesh, rho)
-            A_p = coo_matrix((data, (row, col)), shape=(n_cells, n_cells)).tocsr()
-            rhs_p = -compute_divergence_from_face_fluxes(mesh, mdot_star)
-            
-            # Store continuity residual field
-            continuity_field = rhs_p.copy()
-
-            cont_res, max_mass_imbalance = compute_residual(A_p.data, A_p.indices, A_p.indptr, np.zeros_like(p), rhs_p, max_mass_imbalance, internal_cells)
-            continuity_l2norm.append(cont_res)
-
-            p_prime, _, ksp_1 = scipy_solver(A_p, rhs_p, remove_nullspace=True, **linear_solver_settings['pressure'])
-
-            #=============================================================================
-            # CORRECTIONS (SIMPLE)
-            #=============================================================================
-            grad_p_prime = compute_cell_gradients(mesh, p_prime, weighted=True, weight_exponent=0.5, use_limiter=False)
-            U_prime = velocity_correction(mesh, grad_p_prime, bold_D)
-            U_corrected = U_star + U_prime
-
-            U_prime_face = interpolate_to_face(mesh, U_prime)
-            U_faces_corrected = U_star_rc + U_prime_face
-
-            mdot_prime = mdot_calculation(mesh, rho, U_prime_face, correction=True)
-            mdot_corrected = mdot_star + mdot_prime
-
-            p_corrected = p + alpha_p * p_prime
-
-            # Update fields for next iteration
-            p = p_corrected
-            U = U_corrected
-            U_prev_iter = U_corrected.copy()
-            mdot = mdot_corrected
-            U_old_faces = U_faces_corrected
-
-            if progress_callback:
-                progress_callback.update(i, u_res, v_res, cont_res)
-
-            is_converged = u_res < tol and v_res < tol #and cont_res < tol)
-            if is_converged:
-                if not transient: # Only print for steady-state to avoid verbose output
-                    print(f"Converged at iteration {i}")
-                break
-        
-        # After the inner loop, if running a transient simulation, issue a warning
-        # if the solution for the current time step did not converge.
-        if transient and not is_converged and not interrupted:
-            print(f"  > Warning: Time step {time_step + 1} did not converge within {max_iter} iterations. "
-                  f"Final residuals: u={u_l2norm[-1]:.2e}, v={v_l2norm[-1]:.2e}, cont={continuity_l2norm[-1]:.2e}")
-
-        # For a steady-state simulation, convergence means we can exit the main loop.
-        if is_converged and not transient:
-            break
-
-        if transient and results_dir and save_interval > 0 and (time_step + 1) % save_interval == 0:
-            # Create dedicated directories for U and p transient data
-            transient_base_dir = os.path.join(results_dir, "transient_data")
-            p_dir = os.path.join(transient_base_dir, "p")
-            U_dir = os.path.join(transient_base_dir, "U")
-            os.makedirs(p_dir, exist_ok=True)
-            os.makedirs(U_dir, exist_ok=True)
-
-            time_val = (time_step + 1) * dt
-            print(f"Saving transient solution at time {time_val:.4f}s (Time Step {time_step + 1})")
-            
-            p_path = os.path.join(p_dir, f"p_{time_step + 1:04d}.npy")
-            U_path = os.path.join(U_dir, f"U_{time_step + 1:04d}.npy")
-            np.save(p_path, p)
-            np.save(U_path, U)
 
     time_end = time.time()
     print(f"Solver finished in {time_end - time_start:.2f} seconds.")
-
-    # Save final state for compatibility with existing post-processing
-    if results_dir:
-        np.save(os.path.join(results_dir, "p_final.npy"), p)
-        np.save(os.path.join(results_dir, "U_final.npy"), U)
 
     # Compute combined residual
     combined_residual = [max(u, v, c) for u, v, c in zip(u_l2norm, v_l2norm, continuity_l2norm)]
