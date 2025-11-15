@@ -116,7 +116,7 @@ class LidDrivenCavitySolver(ABC):
         Default implementation creates a structured FV mesh using gmsh.
         Spectral solvers can override this to set self.mesh = None.
         """
-        from meshing.structured_inmemory import create_structured_mesh_2d
+        from meshing.simple_structured import create_structured_mesh_2d
 
         self.mesh = create_structured_mesh_2d(
             nx=self.nx,
