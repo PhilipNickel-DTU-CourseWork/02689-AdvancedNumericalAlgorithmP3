@@ -110,13 +110,11 @@ html_theme_options = {
     "github_url": "https://github.com/PN-CourseWork/02689-AdvancedNumericalAlgorithmP3",
     "navbar_align": "left",
     "header_links_before_dropdown": 5,
-    "show_toc_level": 2,  # Only show 2 levels in the page TOC
-    "secondary_sidebar_items": ["page-toc"],  # Right sidebar: on this page
+    "show_toc_level": 2,
+    "collapse_navigation": True,
+    "navigation_depth": 4,
+    "show_nav_level": 2,
+    "secondary_sidebar_items": ["page-toc"],
 }
 
-# Configure left sidebar - only customize API reference, let sphinx-gallery use defaults
-html_sidebars = {
-    "api_reference": ["page-toc"],  # API reference: only page TOC on left
-    "index": ["page-toc"],  # Index: only page TOC on left
-    # sphinx-gallery pages use default theme sidebars (not specified here)
-}
+# Let pydata theme handle sidebars with defaults
